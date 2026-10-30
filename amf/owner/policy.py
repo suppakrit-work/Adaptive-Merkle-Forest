@@ -13,8 +13,10 @@ A tree is split, and two adjacent trees at the same provider are merged, when
 A split is made at the median, where the check is one hash.  The size test is
 also made on the count a write would produce, before the write, so no tree is
 ever taken past N_up.  A migration is not driven by the counts (owner.evacuate).
-A hysteresis rule keeps N_low well under half of N_up and forbids touching the
-same tree twice within Delta_min policy rounds.
+A hysteresis rule keeps N_low well under half of N_up (here: at most a quarter,
+which Table II's 250 and 1000 meet exactly) and forbids touching the same tree
+twice within Delta_min policy rounds.  A migration is ordered here too, but
+only after a failed check of Phase 3 or Phase 5 (failed_check).
 
 Reads come from the providers' reports, per half of each tree, the owner's
 included; a provider is believed only about trees it holds, and only for
@@ -53,7 +55,7 @@ class PolicyManager:
 
     def __post_init__(self):
         if self.lower * 4 > self.upper:
-            raise ValueError("N_low must stay well under half of N_up")
+            raise ValueError("N_low must stay well under half of N_up (at most a quarter of it)")
         self.owner.policy = self
 
     # -- the counts the rules read -------------------------------------------------
@@ -106,6 +108,13 @@ class PolicyManager:
             out.append(Decision("merge", (a.tree_id, b.tree_id), f"n_a + n_b = {a.count + b.count} < N_low"))
             taken.update((a.tree_id, b.tree_id))
         return out
+
+    def failed_check(self, provider_name: str, trees=None, repairs=None) -> list:
+        """A provider has failed a check: repair the named objects, move the trees away (owner.evacuate),
+        and leave the moved trees alone for Delta_min rounds."""
+        moved = self.owner.evacuate(provider_name, trees, repairs)
+        self._touch(*(r.tree_id for r in moved))
+        return moved
 
     def before_write(self, row, obj_id: bytes):
         """The size test on the count a write would produce: split first if it would pass N_up.

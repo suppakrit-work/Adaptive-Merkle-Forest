@@ -7,7 +7,7 @@ from amf.common import crypto
 from amf.common.index import sign_row
 from amf.common.merkle import EMPTY_ROOT, left_size, verify_path
 from amf.common.orders import Order, sign_order
-from amf.owner import Owner
+from amf.owner import Owner, ReadFault
 from tests.helpers import fill, tree_of, world
 
 
@@ -152,3 +152,21 @@ def test_left_half_is_the_first_ceil_n_over_2_leaves():
     for i in range(7):
         owner.read(owner.catalog.name_of(ids[i]))
     assert prov.report_reads(owner.own)[row.key] == (left_size(7), 7 - left_size(7))
+
+
+
+def test_a_read_names_the_version_its_live_tree_went_live_under():
+    owner, provs = world()
+    fill(owner, 6, ftype="image")
+    prov, row = tree_of(owner, provs, "image")
+    real = prov.write
+
+    def write_then_lose(obj_id, ct):
+        announced = real(obj_id, ct)
+        prov.shadow.pop((owner.own, row.tree_id))                 # the pending tree is lost before the row
+        return announced
+    prov.write = write_then_lose
+    owner.upload("new.jpg", b"new", "image")
+    with pytest.raises(ReadFault) as e:
+        owner.read("fimage-0")
+    assert e.value.kind == "wrong tree or version"                # not a path fault under the newer row

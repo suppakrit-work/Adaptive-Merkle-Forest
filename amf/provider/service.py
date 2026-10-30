@@ -44,6 +44,7 @@ class TreeState:
     ids: list            # identifiers in identifier order
     leaves: list         # stored leaf value of each, same order
     tree: MerkleTree
+    version: int = 0     # the version of the signed row this tree went live under
 
     @classmethod
     def build(cls, own, tree_id, lo, hi, ids, leaves):
@@ -128,16 +129,21 @@ class Provider:
                 self.retained[key] = self.live.pop(key)
             return
         pend = self.shadow.get(key)
+        live = self.live.get(key)
         if pend is not None and pend.state.root == row.root and pend.state.count == row.count:
-            self._promote(key, pend)
-        elif key not in self.live and row.count == 0 and row.root == EMPTY_ROOT:
+            self._promote(key, pend, row.version)
+        elif live is None and row.count == 0 and row.root == EMPTY_ROOT:
             self.live[key] = TreeState.build(row.own, row.tree_id, row.lo, row.hi, [], [])
+            self.live[key].version = row.version
+        elif live is not None and (live.root, live.count) == (row.root, row.count):
+            live.version = row.version                   # the same tree under a newer row
 
-    def _promote(self, key, pend: Pending) -> None:
+    def _promote(self, key, pend: Pending, version: int) -> None:
         if pend.gone is not None:
             self.objects.pop(pend.gone, None)
         if pend.staged:
             self.objects.update(pend.staged)
+        pend.state.version = version
         self.live[key] = pend.state
         del self.shadow[key]
         self.retained.pop(key, None)                    # a tree that came back: the new copy is the one in use
@@ -200,12 +206,22 @@ class Provider:
             return False
         return (order.destination if role == "destination" else order.source) == self.name
 
+    def _held(self, own: bytes, tree_id: bytes, version: int | None = None) -> TreeState:
+        """A live tree of ours whose current row has the version the order names (if it names one)."""
+        row = self.dht.get(own, tree_id)
+        t = self.live.get((own, tree_id))
+        if row is None or row.retired or row.provider != self.name or t is None:
+            raise KeyError("no live tree of ours with that identifier")
+        if version is not None and row.version != version:
+            raise PermissionError("the order is not for the current row of the tree")
+        return t
+
     def decompose(self, order: Order):
         """Split a live tree at boundary p into two pending trees; announce both."""
         if not self._order_ok(order, "split", "source"):
             raise PermissionError("no valid split order from the owner")
         (tid,), (id_a, id_b), p = order.trees, order.new_ids, order.boundary
-        t = self.live[(order.own, tid)]
+        t = self._held(order.own, tid, order.version)
         if not t.lo < p < t.hi:
             raise ValueError("the boundary must lie inside the range")
         k = bisect_left(t.ids, p.to_bytes(crypto.ID_LEN, "big"))
@@ -220,7 +236,7 @@ class Provider:
         if not self._order_ok(order, "merge", "source"):
             raise PermissionError("no valid merge order from the owner")
         (id_a, id_b), (id_ab,) = order.trees, order.new_ids
-        a, b = self.live[(order.own, id_a)], self.live[(order.own, id_b)]
+        a, b = self._held(order.own, id_a, order.version), self._held(order.own, id_b)
         if a.hi != b.lo:
             raise ValueError("the ranges are not adjacent")
         ab = TreeState.build(a.own, id_ab, a.lo, b.hi, a.ids + b.ids, a.leaves + b.leaves)
@@ -299,8 +315,7 @@ class Provider:
         t = self.tree_for(obj_id)
         i = t.position(obj_id)
         self._count_read(t, i)
-        version = self.dht.get(t.own, t.tree_id).version
-        return t.tree_id, version, i, t.leaves[i], self.objects.get(obj_id), t.tree.path(i)
+        return t.tree_id, t.version, i, t.leaves[i], self.objects.get(obj_id), t.tree.path(i)
 
     def report_reads(self, own: bytes) -> dict:
         """Reads served per half of each of this owner's trees since its last report, its own included."""

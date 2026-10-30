@@ -317,7 +317,7 @@ class Owner:
                 raise
             a = IndexRow(self.own, id_a, row.lo, p, row.provider, r_a, ann_a[4], 1)
             b = IndexRow(self.own, id_b, p, row.hi, row.provider, r_b, ann_b[4], 1)
-            self._split_counts(tree_id, id_a, id_b)
+            self._forget_counts(tree_id)
             return self._publish([a, b, retire(row)])
 
     def merge(self, id_a: bytes, id_b: bytes) -> IndexRow:
@@ -344,8 +344,7 @@ class Owner:
             except Exception:
                 prov.discard_pending(self.own, id_ab)
                 raise
-            self.write_counts.pop(id_a, None)
-            self.write_counts.pop(id_b, None)
+            self._forget_counts(id_a, id_b)
             new = IndexRow(self.own, id_ab, a.lo, b.hi, a.provider, r_new, n_new, 1)
             return self._publish([new, retire(a), retire(b)])[0]
 
@@ -430,8 +429,10 @@ class Owner:
                     raise VerificationError(f"{row.provider} no longer recomputes the signed root of tree "
                                             f"{tree_id.hex()[:8]}: localize and repair it first") from e
 
-    def _split_counts(self, old_id: bytes, id_a: bytes, id_b: bytes) -> None:
-        self.write_counts.pop(old_id, None)
+    def _forget_counts(self, *tree_ids: bytes) -> None:
+        """The write counts of trees that a split or a merge retires; the new trees count afresh."""
+        for t in tree_ids:
+            self.write_counts.pop(t, None)
 
     # -- rebuilding the owner's state from the providers (III-A 1 b) -------------------
 

@@ -9,6 +9,7 @@ from amf.common.index import (DHTNode, ForestDigest, IndexRow, digest_tree, fres
                        id_to_int, new_tree_id, owner_space, retire, row_leaf, sign_digest, sign_row,
                        tag_range, verify_digest, verify_row, verify_row_in_digest)
 from amf.common.merkle import EMPTY_ROOT
+from amf.common.orders import Order, sign_order, verify_order
 
 SK = generate_signing_key()
 PK = SK.public_key()
@@ -304,3 +305,16 @@ def test_route_answers_a_reader_in_one_go():
     row, i, T, path, got = n.route(crypto.make_id(k_id, OWN, 2, "x"))
     assert row == rows[1] and T == 3 and got == d and verify_row_in_digest(d, row, i, path)
     assert n.route(crypto.make_id(k_id, OWN, 9, "x"))[0] is None
+
+
+
+def test_a_malformed_row_digest_or_order_is_refused_not_a_crash():
+    n = node()
+    good = sign_row(SK, make_row())
+    for bad in (replace(good, lo=-1), replace(good, count=2 ** 70), replace(good, provider=None),
+                replace(good, signature=None)):
+        assert not verify_row(PK, bad) and not n.accept(bad)
+    d = signed_digest(SK, [good], 1)
+    assert not verify_digest(PK, replace(d, count=-1))
+    order = sign_order(SK, Order("split", OWN, (good.tree_id,), (new_tree_id(), new_tree_id()), 5, "A", version=1))
+    assert not verify_order(PK, replace(order, boundary=-5))

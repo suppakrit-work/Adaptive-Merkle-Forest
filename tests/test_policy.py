@@ -173,3 +173,13 @@ def test_a_round_sends_its_orders_out_together():
     assert [d.kind for d in done] == ["split"] * 3 and time.perf_counter() - t0 < 0.75
     assert all(owner.read(n) == d for n, d in files.items())
     assert all(p.dht.digest(owner.own) == owner.digest for p in provs.values())
+
+
+
+def test_the_policy_manager_orders_a_migration_after_a_failed_check():
+    owner, provs = world()
+    pm = PolicyManager(owner, upper=1000, lower=10)
+    files = fill(owner, 30)
+    (moved,) = pm.failed_check("A")
+    assert moved.provider != "A" and not pm.touchable(moved.tree_id)      # left alone for Delta_min rounds
+    assert all(owner.read(n) == d for n, d in files.items())

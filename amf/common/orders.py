@@ -48,12 +48,12 @@ def sign_order(sk, order: Order) -> Order:
 
 
 def verify_order(pk, order: Order) -> bool:
-    if pk is None or len(order.own) != OWN_LEN or order.own != owner_tag(pk) or len(order.signature) != 64:
-        return False
-    if any(len(t) != TREE_ID_LEN for t in order.trees + order.new_ids):
-        return False
     try:
+        if pk is None or len(order.own) != OWN_LEN or order.own != owner_tag(pk) or len(order.signature) != 64:
+            return False
+        if any(len(t) != TREE_ID_LEN for t in order.trees + order.new_ids):
+            return False
         pk.verify(order.signature, order.payload())
         return True
-    except (InvalidSignature, ValueError):
+    except (InvalidSignature, OverflowError, ValueError, TypeError, AttributeError):
         return False

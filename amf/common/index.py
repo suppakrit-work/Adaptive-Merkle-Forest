@@ -124,12 +124,13 @@ def sign_row(sk: Ed25519PrivateKey, row: IndexRow) -> IndexRow:
 
 
 def verify_row(pk, row: IndexRow) -> bool:
-    if len(row.signature) != SIG_LEN or row.own != owner_tag(pk):
-        return False
+    """False for a row that is not signed by pk, and for one that is not even well formed."""
     try:
+        if len(row.signature) != SIG_LEN or row.own != owner_tag(pk):
+            return False
         pk.verify(row.signature, row.payload())
         return True
-    except InvalidSignature:
+    except (InvalidSignature, OverflowError, ValueError, TypeError, AttributeError):
         return False
 
 
@@ -168,12 +169,12 @@ def sign_digest(sk: Ed25519PrivateKey, d: ForestDigest) -> ForestDigest:
 
 
 def verify_digest(pk, d: ForestDigest) -> bool:
-    if d is None or len(d.signature) != SIG_LEN or d.own != owner_tag(pk):
-        return False
     try:
+        if d is None or len(d.signature) != SIG_LEN or d.own != owner_tag(pk):
+            return False
         pk.verify(d.signature, d.payload())
         return True
-    except InvalidSignature:
+    except (InvalidSignature, OverflowError, ValueError, TypeError, AttributeError):
         return False
 
 

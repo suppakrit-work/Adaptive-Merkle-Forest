@@ -256,3 +256,18 @@ def test_evacuation_stops_when_the_source_no_longer_recomputes_the_signed_root()
     with pytest.raises(VerificationError, match="localize and repair"):
         owner.evacuate("A")
     assert owner.index[row.tree_id].provider == "A"
+
+
+
+def test_an_old_split_or_merge_order_is_refused():
+    owner, provs, files, prov, row = big_image_tree(20)
+    old = sign_order(owner.sk, Order("split", owner.own, (row.tree_id,), (b"a" * 16, b"b" * 16),
+                                     owner.median_boundary(row), "A", version=row.version - 1))
+    with pytest.raises(PermissionError):
+        prov.decompose(old)
+    a, b, _ = owner.split(row.tree_id)
+    stale = sign_order(owner.sk, Order("merge", owner.own, (a.tree_id, b.tree_id), (b"c" * 16,), source="A",
+                                       version=a.version + 1))
+    with pytest.raises(PermissionError):
+        prov.compose(stale)
+    assert prov.shadow == {}

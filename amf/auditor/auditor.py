@@ -75,6 +75,14 @@ def check_answer(row, i, obj_id, ct, stored, path) -> str:
     return "path"
 
 
+def _covers(row, v: int) -> bool:
+    """row.covers(v) for a row from a node, which may not even be well formed."""
+    try:
+        return row.covers(v)
+    except TypeError:
+        return False
+
+
 class Auditor:
     def __init__(self, owner_pks, s: int = 8, rng: random.Random | None = None):
         self.keys = {crypto.owner_tag(pk): pk for pk in owner_pks}   # public keys only; nothing secret
@@ -161,7 +169,7 @@ class Reader:
         d = max(newer, key=lambda x: x.version) if newer else digest
         stale = False
         for row, i, _t, path, _d in answers:
-            if row is None or row.own != own or not row.covers(v) or not verify_row(pk, row):
+            if row is None or row.own != own or not _covers(row, v) or not verify_row(pk, row):
                 continue
             if verify_row_in_digest(d, row, i, path):
                 return row
