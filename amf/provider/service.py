@@ -19,6 +19,9 @@ root and count; the live trees keep serving until the signed rows arrive.  A
 row for a pending tree promotes it (and that is the acknowledgement); a
 retired row removes a live tree; a row that moves one of our trees to another
 provider turns our copy into a retained one, kept until a release order.
+
+An object the provider no longer has is answered with no ciphertext (None), and
+its recomputed leaf is MISSING, so a read, a challenge and a recount all show it.
 """
 from bisect import bisect_left
 from dataclasses import dataclass
@@ -27,6 +30,8 @@ from amf.common import crypto
 from amf.common.index import DHTNode, IndexRow
 from amf.common.merkle import EMPTY_ROOT, MerkleTree, left_size
 from amf.common.orders import Order, verify_order
+
+MISSING = bytes(32)                   # the recomputed leaf of an object the provider does not hold
 
 
 @dataclass
@@ -62,6 +67,10 @@ class TreeState:
             return i
         raise KeyError("identifier not in this tree")
 
+    def holds(self, obj_id: bytes) -> bool:
+        i = bisect_left(self.ids, obj_id)
+        return i < len(self.ids) and self.ids[i] == obj_id
+
     def announce(self):
         """What the provider announces for a pending tree: (tid, lo, hi, root, count)."""
         return self.tree_id, self.lo, self.hi, self.root, self.count
@@ -86,7 +95,7 @@ class Provider:
         self.retained: dict[tuple, TreeState] = {}                  # migrated away, kept until released
         self.dht = DHTNode(owner_pks)
         self.catalog_copy: dict[bytes, dict] = {}                   # own -> {slot: (version, blob)}
-        self.reads: dict[tuple, list] = {}                          # (own, tid) -> [left half, right half]
+        self.reads: dict[bytes, dict] = {}                          # own -> {(own, tid): [left half, right half]}
         self._walk_cache: dict[tuple, list] = {}
 
     def register_owner(self, pk) -> bytes:
@@ -131,6 +140,7 @@ class Provider:
             self.objects.update(pend.staged)
         self.live[key] = pend.state
         del self.shadow[key]
+        self.retained.pop(key, None)                    # a tree that came back: the new copy is the one in use
         self._walk_cache.pop(key, None)
 
     def acknowledged(self, own: bytes, tree_id: bytes, root: bytes) -> bool:
@@ -218,21 +228,34 @@ class Provider:
         return [ab.announce()]
 
     def export_tree(self, order: Order):
-        """The Migrate Pipe, source side: hand a tree over only on the owner's signed order."""
+        """The Migrate Pipe, source side: hand a tree over only on the owner's signed order, and
+        only for the row version it names (an old order does not open the pipe again)."""
         if not self._order_ok(order, "migrate", "source"):
             raise PermissionError("no valid migration order from the owner")
+        row = self.dht.get(order.own, order.trees[0])
+        if row is None or row.retired or row.version != order.version or row.provider != self.name:
+            raise PermissionError("the order is not for the current row of a tree held here")
         t = self.live[(order.own, order.trees[0])]
+        missing = [i for i in t.ids if i not in self.objects]
+        if missing:
+            raise KeyError(f"{len(missing)} object(s) of the tree missing at the source")
         return list(t.ids), [self.objects[i] for i in t.ids]
+
+    def check_import(self, order: Order) -> IndexRow:
+        """The destination's own checks before it pulls anything: a signed order addressed to it,
+        for the current row of the tree."""
+        if not self._order_ok(order, "migrate", "destination"):
+            raise PermissionError("no valid migration order from the owner")
+        row = self.dht.get(order.own, order.trees[0])
+        if row is None or row.retired or row.version != order.version:
+            raise KeyError("no current signed row for the tree being moved")
+        return row
 
     def import_from(self, order: Order, source: "Provider"):
         """The Migrate Pipe, destination side: pull the tree from the source, check what arrived
         against the signed root before announcing anything."""
-        if not self._order_ok(order, "migrate", "destination"):
-            raise PermissionError("no valid migration order from the owner")
+        row = self.check_import(order)
         tid = order.trees[0]
-        row = self.dht.get(order.own, tid)
-        if row is None or row.retired or row.version != order.version:
-            raise KeyError("no current signed row for the tree being moved")
         ids, cts = source.export_tree(order)
         state = TreeState.build(order.own, tid, row.lo, row.hi, ids,
                                 [crypto.leaf_hash(i, c) for i, c in zip(ids, cts)])
@@ -245,7 +268,7 @@ class Provider:
         """Identifier, ciphertext, stored leaf and path at positions of a pending (migrated-in) tree."""
         pend = self.shadow[(own, tree_id)]
         st = pend.state
-        return [(i, st.ids[i], pend.staged[st.ids[i]], st.leaves[i], st.tree.path(i)) for i in positions]
+        return [(i, st.ids[i], pend.staged.get(st.ids[i]), st.leaves[i], st.tree.path(i)) for i in positions]
 
     def release(self, order: Order) -> int:
         """A migration source drops its copy on the owner's second signed order. Returns objects dropped."""
@@ -254,39 +277,46 @@ class Provider:
         t = self.retained.pop((order.own, order.trees[0]), None)
         if t is None:
             return 0
+        dropped = 0
         for obj_id in t.ids:
-            self.objects.pop(obj_id, None)
-        return t.count
+            if not self._in_use(obj_id):                # the tree, or part of it, may have come back
+                dropped += self.objects.pop(obj_id, None) is not None
+        return dropped
+
+    def _in_use(self, obj_id: bytes) -> bool:
+        row = self.dht.lookup(obj_id)
+        t = self.live.get(row.key) if row is not None else None
+        return t is not None and t.holds(obj_id)
 
     # -- the Proof Engine ------------------------------------------------------
 
     def _count_read(self, t: TreeState, i: int) -> None:
-        halves = self.reads.setdefault(t.key, [0, 0])
+        halves = self.reads.setdefault(t.own, {}).setdefault(t.key, [0, 0])
         halves[0 if i < left_size(t.count) else 1] += 1
 
     def read(self, obj_id: bytes):
-        """The read path: (tid, version of the row, position, stored leaf, CT, sibling hashes)."""
+        """The read path: (tid, version of the row, position, stored leaf, CT or None, sibling hashes)."""
         t = self.tree_for(obj_id)
         i = t.position(obj_id)
         self._count_read(t, i)
         version = self.dht.get(t.own, t.tree_id).version
-        return t.tree_id, version, i, t.leaves[i], self.objects[obj_id], t.tree.path(i)
+        return t.tree_id, version, i, t.leaves[i], self.objects.get(obj_id), t.tree.path(i)
 
-    def report_reads(self) -> dict:
-        """Reads served per half of each tree since the last report, the owner's included."""
-        out, self.reads = {k: tuple(v) for k, v in self.reads.items()}, {}
-        return out
+    def report_reads(self, own: bytes) -> dict:
+        """Reads served per half of each of this owner's trees since its last report, its own included."""
+        return {k: tuple(v) for k, v in self.reads.pop(own, {}).items()}
 
     def challenge(self, own: bytes, tree_id: bytes, positions):
-        """Identifier, ciphertext, stored leaf and path at positions of the challenger's choosing."""
+        """Identifier, ciphertext (or None), stored leaf and path at positions of the challenger's choosing."""
         t = self.live[(own, tree_id)]
-        return [(i, t.ids[i], self.objects[t.ids[i]], t.leaves[i], t.tree.path(i)) for i in positions]
+        return [(i, t.ids[i], self.objects.get(t.ids[i]), t.leaves[i], t.tree.path(i)) for i in positions]
 
     # -- what fault localization asks for (Phase 5) --------------------------------
 
     def recomputed_leaves(self, own: bytes, tree_id: bytes) -> list:
         t = self.live[(own, tree_id)]
-        return [crypto.leaf_hash(i, self.objects[i]) for i in t.ids]
+        cts = [self.objects.get(i) for i in t.ids]
+        return [MISSING if ct is None else crypto.leaf_hash(i, ct) for i, ct in zip(t.ids, cts)]
 
     def recomputed_root(self, own: bytes, tree_id: bytes) -> bytes:
         """r': the root recomputed from the objects held right now (a recount)."""
@@ -299,13 +329,28 @@ class Provider:
     def stored_root(self, own: bytes, tree_id: bytes) -> bytes:
         return self.live[(own, tree_id)].root
 
+    def recount(self, own: bytes) -> dict:
+        """The question that opens Phase 5, for all of this owner's trees here in one answer:
+        tid -> (stored root, r')."""
+        out = {}
+        for tid in self.dht.tree_ids(own):
+            if (own, tid) in self.live:
+                out[tid] = (self.stored_root(own, tid), self.recomputed_root(own, tid))
+        return out
+
     def halves(self, own: bytes, tree_id: bytes, k: int, lo: int, hi: int):
-        """One round: for the two children of node k (leaves [lo, hi)), st and rec."""
+        """For the two children of node k (leaves [lo, hi)), st and rec."""
+        if hi - lo < 2:
+            raise ValueError("a single leaf has no children")
         t = self.live[(own, tree_id)]
         rec = self._walk_cache.get((own, tree_id)) or self.recomputed_leaves(own, tree_id)
         mid = lo + left_size(hi - lo)
         return [(2 * k, lo, mid, t.tree.node(2 * k), MerkleTree(rec[lo:mid]).root),
                 (2 * k + 1, mid, hi, t.tree.node(2 * k + 1), MerkleTree(rec[mid:hi]).root)]
+
+    def round_halves(self, own: bytes, tree_id: bytes, nodes) -> list:
+        """One round of the walk in one exchange: the halves of every node [(k, lo, hi), ...] asked."""
+        return [self.halves(own, tree_id, k, lo, hi) for k, lo, hi in nodes]
 
     def report_mismatches(self, own: bytes, tree_id: bytes):
         """One exchange: the positions where stored and recomputed leaf values differ, each with

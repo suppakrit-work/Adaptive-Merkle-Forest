@@ -207,3 +207,12 @@ def test_catalog_and_type_table_are_rebuilt_from_the_highest_versions():
     gone = newest(old, new, {b: (5, seal_tombstone(MK, b, 5))})
     cat2, _ = Catalog.from_copy(MK, gone)
     assert cat2.get("b.jpg") is None and len(cat2) == 1
+
+
+
+def test_rebuilding_from_several_copies_passes_over_an_entry_that_does_not_open():
+    a = ident("a.jpg")
+    good = {a: (3, seal_entry(MK, "a.jpg", a, leaf_for("a.jpg"), 3)), TYPES_KEY: (1, seal_types(MK, {"image": 1}, 1))}
+    planted = {a: (9, b"\x00" * 64), TYPES_KEY: (9, b"junk")}     # higher versions, but they do not open
+    cat, types = Catalog.from_copies(MK, [planted, good])
+    assert types == {"image": 1} and cat.get("a.jpg") == (a, leaf_for("a.jpg"))

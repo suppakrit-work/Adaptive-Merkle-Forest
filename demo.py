@@ -106,10 +106,10 @@ def main():
     old_d = owner.digest
     owner.upload("clip1.mp4", files["clip1.mp4"] + b" (edited)", "video")
     files["clip1.mp4"] += b" (edited)"
-    try:
-        reader.read(rid, old_d, list(provs.values()))
-    except KeyError:
-        say("    after a write, a reader still holding the old D finds no row that reaches it: it asks the owner again")
+    ct = reader.read(rid, old_d, list(provs.values()))
+    assert crypto.decrypt(owner.mk, rid, ct) == files["clip1.mp4"]
+    say("    after a write, a reader still holding the old D asks every node and takes the newer D the owner signed:")
+    say("    it reads the edited clip, as fresh as one honest node makes it")
 
     say("\n    An auditor holds public keys only; asked about this owner it takes the live rows from the nodes,")
     say("    recomputes D, and challenges s positions in every tree.")
@@ -186,8 +186,8 @@ def main():
     provs["B"].halves = lying
     lied = loc.localize(video.tree_id)
     provs["B"].halves = real
-    say(f"    verdict '{lied.verdict}': {lied.note}")
-    assert lied.verdict == "provider-lied"
+    say(f"    caught in that round, verdict '{lied.verdict}': {lied.note}")
+    assert lied.verdict == "stored-hashes-damaged"
 
     # ---- Phase 4: migration after the failed check -----------------------------------------
     say("\n[6] Phase 4 after a failed check: repair the named object, then move B's trees away.")

@@ -1,4 +1,6 @@
 """End-to-end tests for amf/owner.py -- Phases 1-3 and Algorithm 1 for writes."""
+from dataclasses import replace
+
 import pytest
 
 from amf.common.index import digest_tree, verify_digest, verify_row
@@ -216,3 +218,29 @@ def test_recovery_takes_the_highest_version_when_one_provider_is_rolled_back():
     provs["B"].catalog_copy[owner.own] = stale          # B hands out an older copy
     back = Owner.recover(owner.mk, owner.sk, list(provs.values()))
     assert back.read("a.jpg") == b"v2"
+
+
+
+def test_recovery_uses_only_what_verifies():
+    owner, provs = world()
+    files = fill(owner, 15)
+    _, row = tree_of(owner, provs, "image")
+    c = provs["C"]
+    real_get = c.dht.get
+    c.dht.get = lambda own, tid: replace(row, version=row.version + 50) if tid == row.tree_id else real_get(own, tid)
+    copy = c.catalog_copy[owner.own]
+    obj_id = owner.catalog.get("fimage-0")[0]
+    copy[obj_id] = (copy[obj_id][0] + 50, b"\x00" * 60)               # a planted entry that does not open
+    back = Owner.recover(owner.mk, owner.sk, list(provs.values()))
+    assert back.digest == owner.digest and len(back.live_rows()) == 3
+    assert all(back.read(n) == d for n, d in files.items())
+
+
+def test_recovery_refuses_rows_that_do_not_reach_the_latest_d():
+    owner, provs = world()
+    fill(owner, 9)
+    _, row = tree_of(owner, provs, "video")
+    for p in provs.values():
+        p.dht.rows = {k: r for k, r in p.dht.rows.items() if k != row.key}   # every node lost one row
+    with pytest.raises(VerificationError):
+        Owner.recover(owner.mk, owner.sk, list(provs.values()))

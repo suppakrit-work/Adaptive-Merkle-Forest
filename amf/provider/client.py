@@ -137,8 +137,8 @@ class RemoteProvider:
     def read(self, obj_id):
         return self.call("provider", "read", obj_id)
 
-    def report_reads(self):
-        return self.call("provider", "report_reads")
+    def report_reads(self, own):
+        return self.call("provider", "report_reads", own)
 
     def challenge(self, own, tree_id, positions):
         return self.call("provider", "challenge", own, tree_id, list(positions))
@@ -155,8 +155,14 @@ class RemoteProvider:
     def stored_root(self, own, tree_id):
         return self.call("provider", "stored_root", own, tree_id)
 
+    def recount(self, own):
+        return self.call("provider", "recount", own)
+
     def halves(self, own, tree_id, k, lo, hi):
         return self.call("provider", "halves", own, tree_id, k, lo, hi)
+
+    def round_halves(self, own, tree_id, nodes):
+        return self.call("provider", "round_halves", own, tree_id, list(nodes))
 
     def report_mismatches(self, own, tree_id):
         return self.call("provider", "report_mismatches", own, tree_id)
@@ -186,6 +192,9 @@ class RemoteDHT:
 
     def row_with_path(self, own, tree_id):
         return self._p.call("dht", "row_with_path", own, tree_id)
+
+    def route(self, obj_id):
+        return self._p.call("dht", "route", obj_id)
 
     def live_rows(self, own=None):
         return self._p.call("dht", "live_rows", own)

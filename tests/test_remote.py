@@ -150,6 +150,7 @@ def test_every_call_counts_its_bytes(net):
     owner.read("fimage-0")
     assert provs["A"].net.calls > 0 and provs["A"].net.received > before
 
+
 # ---- sending to every DHT node at once (III-C, Parallelism) ----------------------------------
 
 def test_an_owner_that_sends_to_every_node_at_once_keeps_the_nodes_in_step(net):
@@ -176,3 +177,22 @@ def test_at_once_or_one_at_a_time_the_messages_are_the_same(net):
         owner.upload("one.jpg", b"same bytes", "image")
         counts.append(sum(p.net.calls for p in provs.values()) - before)
     assert counts[0] == counts[1] == 8                                 # only the waiting changes
+
+
+
+def test_two_migrations_in_opposite_directions_do_not_wait_for_each_other(net):
+    provs, _ = net
+    w = remote_world(provs)
+    v = remote_world(provs, Owner(s=4, rng=random.Random(4)))
+    fill(w, 9, ftype="image")                                          # W's images at A
+    fill(v, 9, ftype="video")                                          # V's videos at B
+    (wa,) = [r for r in w.live_rows() if r.provider == "A"]
+    (vb,) = [r for r in v.live_rows() if r.provider == "B"]
+    done = []
+    jobs = [threading.Thread(target=lambda: done.append(w.migrate(wa.tree_id, "B")), daemon=True),
+            threading.Thread(target=lambda: done.append(v.migrate(vb.tree_id, "A")), daemon=True)]
+    for j in jobs:
+        j.start()
+    for j in jobs:
+        j.join(timeout=20)
+    assert not any(j.is_alive() for j in jobs) and sorted(r.provider for r in done) == ["A", "B"]

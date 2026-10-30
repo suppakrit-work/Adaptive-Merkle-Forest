@@ -1,6 +1,9 @@
 """Tests for amf/policy.py -- the split and merge rules of Phase 4."""
+import time
+
 import pytest
 
+from amf.owner import Owner
 from amf.owner.policy import PolicyManager, hot
 from tests.helpers import fill, tree_of, world
 
@@ -126,3 +129,47 @@ def test_the_policy_never_migrates_on_its_own():
     for _ in range(100):
         owner.read("fimage-0")                                     # A carries almost every read
     assert all(d.kind != "migrate" for d in pm.tick())
+
+
+# ---- what the providers report, and a round in parallel -------------------------------------
+
+def test_each_owner_gets_only_its_own_read_counts():
+    w, provs = world()
+    v = Owner()
+    for p in provs.values():
+        v.register_provider(p)
+    v.add_type("image", 1, "A")
+    for k in range(5):
+        v.upload(f"v{k}", b"v's", "image")
+    fill(w, 6, ftype="image")
+    pw, pv = PolicyManager(w, upper=100, lower=10), PolicyManager(v, upper=100, lower=10)
+    for _ in range(7):
+        v.read("v0")
+    pw.tick()                                                    # W's round must not use up V's counts
+    pv.collect_reads()
+    (vrow,) = v.live_rows()
+    assert sum(pv.reads[vrow.tree_id]) == 7 and vrow.tree_id not in pw.reads
+
+
+def test_a_provider_is_believed_only_about_its_own_trees_and_real_counts():
+    owner, provs = world()
+    pm = PolicyManager(owner, upper=100, lower=10, gamma=4, mu=20)
+    fill(owner, 30, ftype="image")
+    prov, row = tree_of(owner, provs, "image")
+    owner.write_counts.clear()
+    provs["B"].report_reads = lambda own: {row.key: (1000, 0)}       # B does not hold the image tree
+    prov.report_reads = lambda own: {row.key: (-25, 0)}
+    assert pm.tick() == [] and pm.accesses(row.tree_id) == (0, 0)
+
+
+def test_a_round_sends_its_orders_out_together():
+    owner, provs = world(owner=Owner(s=4, parallel=True))
+    files = fill(owner, 75)                                      # 25 per type, one tree each
+    pm = PolicyManager(owner, upper=20, lower=5)
+    for p in provs.values():
+        p.decompose = (lambda real: lambda order: (time.sleep(0.3), real(order))[1])(p.decompose)
+    t0 = time.perf_counter()
+    done = pm.tick()
+    assert [d.kind for d in done] == ["split"] * 3 and time.perf_counter() - t0 < 0.75
+    assert all(owner.read(n) == d for n, d in files.items())
+    assert all(p.dht.digest(owner.own) == owner.digest for p in provs.values())

@@ -17,9 +17,13 @@ A hysteresis rule keeps N_low well under half of N_up and forbids touching the
 same tree twice within Delta_min policy rounds.
 
 Reads come from the providers' reports, per half of each tree, the owner's
-included; writes are the ones the owner made (owner.write_counts).
+included; a provider is believed only about trees it holds, and only for
+counts that can be counts.  Writes are the ones the owner made
+(owner.write_counts).  When the owner runs in parallel, the orders of one
+round go out together and each announced root is checked as it arrives.
 Parameters (Table II): N_up 1000, N_low 250, gamma 4, mu 50, Delta_min 3.
 """
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 
@@ -55,10 +59,13 @@ class PolicyManager:
     # -- the counts the rules read -------------------------------------------------
 
     def collect_reads(self) -> None:
-        """Fold in what each provider reports for the owner's trees."""
+        """Fold in what each provider reports for the owner's trees that it holds."""
         for prov in self.owner.providers.values():
-            for (own, tid), (l, r) in prov.report_reads().items():
-                if own != self.owner.own:
+            for (own, tid), (l, r) in prov.report_reads(self.owner.own).items():
+                row = self.owner.index.get(tid)
+                if own != self.owner.own or row is None or row.retired or row.provider != prov.name:
+                    continue
+                if not all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in (l, r)):
                     continue
                 halves = self.reads.setdefault(tid, [0, 0])
                 halves[0] += l
@@ -114,18 +121,35 @@ class PolicyManager:
     def tick(self) -> list[Decision]:
         self.round_no += 1
         self.collect_reads()
+        decisions = self.decide()
+        if self.owner.parallel and len(decisions) > 1:       # the trees of one round are disjoint
+            with ThreadPoolExecutor(max_workers=min(8, len(decisions))) as pool:
+                outcomes = list(pool.map(self._carry_out, decisions))
+        else:
+            outcomes = [self._carry_out(d) for d in decisions]
         done = []
-        for d in self.decide():
+        for d, (result, error) in zip(decisions, outcomes):
+            if error is not None:
+                continue
             if d.kind == "split":
-                a, b, _ = self.owner.split(d.trees[0])
+                a, b, _ = result
                 self._after_split(d.trees[0], a, b)
             else:
-                new = self.owner.merge(*d.trees)
-                self._touch(new.tree_id, *d.trees)
+                self._touch(result.tree_id, *d.trees)
                 for t in d.trees:
                     self.reads.pop(t, None)
             done.append(d)
+        errors = [e for _, e in outcomes if e is not None]
+        if errors:
+            raise errors[0]
         return done
+
+    def _carry_out(self, d: Decision):
+        """(result, None) or (None, the exception): a failed check leaves the other decisions standing."""
+        try:
+            return (self.owner.split(d.trees[0]) if d.kind == "split" else self.owner.merge(*d.trees)), None
+        except Exception as e:
+            return None, e
 
     def _after_split(self, old_id, a, b) -> None:
         self._touch(old_id, a.tree_id, b.tree_id)

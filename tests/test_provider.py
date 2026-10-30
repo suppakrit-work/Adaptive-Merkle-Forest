@@ -100,8 +100,8 @@ def test_reads_are_reported_per_half_of_each_tree_the_owners_included():
     for name in names[:3]:
         owner.read(name)                                   # three reads on the left half
     owner.read(names[-1])                                  # one on the right half
-    assert prov.report_reads() == {row.key: (3, 1)}
-    assert prov.report_reads() == {}                       # "since its last report"
+    assert prov.report_reads(owner.own) == {row.key: (3, 1)}
+    assert prov.report_reads(owner.own) == {}              # "since its last report"
 
 
 def test_a_provider_holds_trees_of_many_owners_side_by_side():
@@ -151,4 +151,4 @@ def test_left_half_is_the_first_ceil_n_over_2_leaves():
     ids = prov.live[row.key].ids
     for i in range(7):
         owner.read(owner.catalog.name_of(ids[i]))
-    assert prov.report_reads()[row.key] == (left_size(7), 7 - left_size(7))
+    assert prov.report_reads(owner.own)[row.key] == (left_size(7), 7 - left_size(7))

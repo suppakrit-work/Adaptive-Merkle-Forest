@@ -20,14 +20,15 @@ median or two trees of nearly equal size are merged (Lemma 1).
 """
 import os
 import random
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 from amf.common import crypto
-from amf.owner.catalog import TYPES_KEY, Catalog, newest, seal_entry, seal_tombstone, seal_types
-from amf.common.index import (ForestDigest, IndexRow, digest_tree, freshest, generate_signing_key, id_to_int,
-                       new_tree_id, retire, row_leaf, sign_digest, sign_row, tag_range, verify_digest,
-                       verify_row)
+from amf.owner.catalog import TYPES_KEY, Catalog, seal_entry, seal_tombstone, seal_types
+from amf.common.index import (ForestDigest, IndexRow, digest_tree, freshest_signed, generate_signing_key,
+                       id_to_int, new_tree_id, retire, row_leaf, sign_digest, sign_row, tag_range,
+                       verify_digest)
 from amf.common.merkle import EMPTY_ROOT, left_size, node_hash, root_of, verify_path
 from amf.common.orders import Order, sign_order
 
@@ -59,7 +60,7 @@ class Owner:
         self.digest: ForestDigest | None = None
         self.type_table: dict[str, int] = {}
         self.s = s                                      # positions sampled by a migration challenge
-        self.rng = rng or random.Random()
+        self.rng = rng or random.SystemRandom()          # positions a provider cannot predict
         self.hashes = 0                                 # hash evaluations spent on checks (for the bench)
         self.digest_hashes = 0                          # hash evaluations spent keeping D (for the bench)
         self._dtree = None                              # D's tree over the live rows, and their positions
@@ -73,6 +74,7 @@ class Owner:
         # send to every DHT node at once (III-C, Parallelism); worth it when the providers are remote
         self.parallel = parallel
         self._pool = None
+        self._lock = threading.Lock()                   # checks and signing one at a time (Parallelism)
 
     # -- Phase 1 ------------------------------------------------------------------
 
@@ -209,7 +211,7 @@ class Owner:
         announced = prov.write(obj_id, ct)
         try:
             self._check_write(row, announced, obj_id, leaf)
-        except VerificationError:
+        except Exception:
             prov.discard_pending(self.own, row.tree_id)
             self.unacked.pop(obj_id, None)
             raise
@@ -225,13 +227,13 @@ class Owner:
         obj_id, _leaf = self.catalog.get(name)
         row = self.row_for(obj_id)
         prov = self.providers[row.provider]
-        self._count_write(row, obj_id)
         announced = prov.delete(obj_id)
         try:
             self._check_write(row, announced, obj_id, None)
-        except VerificationError:
+        except Exception:
             prov.discard_pending(self.own, row.tree_id)
             raise
+        self._count_write(row, obj_id)
         self.catalog.remove(name)
         return self._publish([replace(row, root=announced[3], count=announced[4], version=row.version + 1)],
                              {obj_id: None})[0]
@@ -254,6 +256,8 @@ class Owner:
             raise ReadFault(row.provider, row.tree_id, i, "wrong tree or version")
         if i != self.catalog.position(obj_id, row.lo):
             raise ReadFault(row.provider, row.tree_id, i, "wrong position")
+        if ct is None:
+            raise ReadFault(row.provider, row.tree_id, i, "missing")
         leaf = crypto.leaf_hash(obj_id, ct)
         if not verify_path(row.root, row.count, i, leaf, path):
             kind = "ciphertext" if verify_path(row.root, row.count, i, stored, path) else "path"
@@ -294,26 +298,27 @@ class Owner:
         id_a, id_b = new_tree_id(), new_tree_id()
         order = self._order("split", [tree_id], [id_a, id_b], p, row.provider, version=row.version)
         ann_a, ann_b = prov.decompose(order)
-        try:
-            if (ann_a[0], ann_b[0]) != (id_a, id_b):
-                raise VerificationError("the provider announced other tree identifiers")
-            self._check_announced_range_count(ann_a, row.lo, p)
-            self._check_announced_range_count(ann_b, p, row.hi)
-            r_a, r_b = ann_a[3], ann_b[3]
-            if p == self.median_boundary(row) and ann_b[4] >= 1:
-                self.hashes += 1                                       # Algorithm 1, line 6
-                if node_hash(r_a, r_b) != row.root:
-                    raise VerificationError("H(r_a || r_b) is not the signed root")
-            else:
-                self._check_root(r_a, self.catalog.leaves_in(row.lo, p))
-                self._check_root(r_b, self.catalog.leaves_in(p, row.hi))
-        except VerificationError:
-            prov.discard_pending(self.own, id_a, id_b)
-            raise
-        a = IndexRow(self.own, id_a, row.lo, p, row.provider, r_a, ann_a[4], 1)
-        b = IndexRow(self.own, id_b, p, row.hi, row.provider, r_b, ann_b[4], 1)
-        self._split_counts(tree_id, id_a, id_b)
-        return self._publish([a, b, retire(row)])
+        with self._lock:
+            try:
+                if (ann_a[0], ann_b[0]) != (id_a, id_b):
+                    raise VerificationError("the provider announced other tree identifiers")
+                self._check_announced_range_count(ann_a, row.lo, p)
+                self._check_announced_range_count(ann_b, p, row.hi)
+                r_a, r_b = ann_a[3], ann_b[3]
+                if row.count >= 2 and ann_b[4] >= 1 and p == self.median_boundary(row):
+                    self.hashes += 1                                       # Algorithm 1, line 6
+                    if node_hash(r_a, r_b) != row.root:
+                        raise VerificationError("H(r_a || r_b) is not the signed root")
+                else:
+                    self._check_root(r_a, self.catalog.leaves_in(row.lo, p))
+                    self._check_root(r_b, self.catalog.leaves_in(p, row.hi))
+            except Exception:
+                prov.discard_pending(self.own, id_a, id_b)
+                raise
+            a = IndexRow(self.own, id_a, row.lo, p, row.provider, r_a, ann_a[4], 1)
+            b = IndexRow(self.own, id_b, p, row.hi, row.provider, r_b, ann_b[4], 1)
+            self._split_counts(tree_id, id_a, id_b)
+            return self._publish([a, b, retire(row)])
 
     def merge(self, id_a: bytes, id_b: bytes) -> IndexRow:
         """Composition of two adjacent trees at the same provider. Returns the new row."""
@@ -324,24 +329,25 @@ class Owner:
         id_ab = new_tree_id()
         order = self._order("merge", [id_a, id_b], [id_ab], source=a.provider, version=a.version)
         (ann,) = prov.compose(order)
-        try:
-            if ann[0] != id_ab:
-                raise VerificationError("the provider announced another tree identifier")
-            self._check_announced_range_count(ann, a.lo, b.hi)
-            r_new, n_new = ann[3], ann[4]
-            if b.count >= 1 and a.count == left_size(n_new):
-                self.hashes += 1                                       # Algorithm 1, line 7
-                if node_hash(a.root, b.root) != r_new:
-                    raise VerificationError("H(r_a || r_b) is not the announced root")
-            else:
-                self._check_root(r_new, self.catalog.leaves_in(a.lo, b.hi))
-        except VerificationError:
-            prov.discard_pending(self.own, id_ab)
-            raise
-        self.write_counts.pop(id_a, None)
-        self.write_counts.pop(id_b, None)
-        new = IndexRow(self.own, id_ab, a.lo, b.hi, a.provider, r_new, n_new, 1)
-        return self._publish([new, retire(a), retire(b)])[0]
+        with self._lock:
+            try:
+                if ann[0] != id_ab:
+                    raise VerificationError("the provider announced another tree identifier")
+                self._check_announced_range_count(ann, a.lo, b.hi)
+                r_new, n_new = ann[3], ann[4]
+                if b.count >= 1 and a.count == left_size(n_new):
+                    self.hashes += 1                                       # Algorithm 1, line 7
+                    if node_hash(a.root, b.root) != r_new:
+                        raise VerificationError("H(r_a || r_b) is not the announced root")
+                else:
+                    self._check_root(r_new, self.catalog.leaves_in(a.lo, b.hi))
+            except Exception:
+                prov.discard_pending(self.own, id_ab)
+                raise
+            self.write_counts.pop(id_a, None)
+            self.write_counts.pop(id_b, None)
+            new = IndexRow(self.own, id_ab, a.lo, b.hi, a.provider, r_new, n_new, 1)
+            return self._publish([new, retire(a), retire(b)])[0]
 
     def migrate(self, tree_id: bytes, destination: str) -> IndexRow:
         """Move a whole tree through the Migrate Pipe; the source keeps its copy until released."""
@@ -359,7 +365,7 @@ class Owner:
             if ann[3] != row.root:                                     # Algorithm 1, line 8
                 raise VerificationError("a migration changes nothing inside the tree")
             self._challenge_pending(dst, row)                          # Algorithm 1, line 9
-        except VerificationError:
+        except Exception:
             dst.discard_pending(self.own, tree_id)
             raise
         return self._publish([replace(row, provider=destination, version=row.version + 1)])[0]
@@ -368,9 +374,15 @@ class Owner:
         if row.count == 0:
             return
         sample = self.rng.sample(range(row.count), min(self.s, row.count))
-        for i, obj_id, ct, _stored, path in dst.pending_challenge(self.own, row.tree_id, sample):
+        answers = {a[0]: a for a in dst.pending_challenge(self.own, row.tree_id, sample)}
+        for i in sample:                                   # an answer for every position asked, at that position
+            if i not in answers:
+                raise VerificationError(f"no answer for position {i} at the destination")
+            _i, obj_id, ct, _stored, path = answers[i]
             if obj_id != self.catalog.id_at(row.lo, i):
                 raise VerificationError(f"position {i} holds another identifier")
+            if ct is None:
+                raise VerificationError(f"position {i} is missing at the destination")
             leaf = crypto.leaf_hash(obj_id, ct)
             self.hashes += 1 + len(path)
             if leaf != self.catalog.leaf_of(obj_id) or not verify_path(row.root, row.count, i, leaf, path):
@@ -393,17 +405,30 @@ class Owner:
                 self.upload(name, fix[0], fix[1])
         if trees is None:
             trees = [r.tree_id for r in self.live_rows() if r.provider == provider_name]
-        moved = []
-        for tid in trees:
-            held = {n: 0 for n in self.providers if n != provider_name}
+        return [self._move_away(tid, provider_name) for tid in trees]
+
+    def _move_away(self, tree_id: bytes, provider_name: str) -> IndexRow:
+        """One tree to the provider holding the fewest of the owner's trees.  If the migration fails the
+        row still names the source: the owner recounts the source and tries another destination (IV-D)."""
+        tried = {provider_name}
+        while True:
+            held = {n: 0 for n in self.providers if n not in tried}
             if not held:
-                raise ValueError("no other provider to move to")
+                if len(tried) == 1:
+                    raise ValueError("no other provider to move to")
+                raise VerificationError(f"no destination accepted tree {tree_id.hex()[:8]}")
             for r in self.live_rows():
                 if r.provider in held:
                     held[r.provider] += 1
             target = min(sorted(held), key=lambda n: held[n])
-            moved.append(self.migrate(tid, target))
-        return moved
+            try:
+                return self.migrate(tree_id, target)
+            except Exception as e:
+                tried.add(target)
+                row = self.index[tree_id]
+                if self.providers[row.provider].recomputed_root(self.own, tree_id) != row.root:
+                    raise VerificationError(f"{row.provider} no longer recomputes the signed root of tree "
+                                            f"{tree_id.hex()[:8]}: localize and repair it first") from e
 
     def _split_counts(self, old_id: bytes, id_a: bytes, id_b: bytes) -> None:
         self.write_counts.pop(old_id, None)
@@ -412,18 +437,24 @@ class Owner:
 
     @classmethod
     def recover(cls, mk: bytes, sk, providers, s: int = 8):
-        """Whoever holds MK and the signing key rebuilds catalog, type table, index and D."""
+        """Whoever holds MK and the signing key rebuilds catalog, type table, index and D.  Only what
+        verifies is used: the newest signed row of each tree, the newest signed D, the newest catalog
+        entry that opens under MK; and the rows must recompute to that D."""
         owner = cls(mk=mk, sk=sk, s=s)
         copies = [p.catalog_copy.get(owner.own, {}) for p in providers]
-        owner.catalog, owner.type_table = Catalog.from_copy(mk, newest(*copies))
+        owner.catalog, owner.type_table = Catalog.from_copies(mk, copies)
         tids = {tid for p in providers for tid in p.dht.tree_ids(owner.own)}
         for tid in tids:
-            row = freshest([p.dht.get(owner.own, tid) for p in providers])
-            if row is not None and verify_row(owner.pk, row):
+            row = freshest_signed(owner.pk, [p.dht.get(owner.own, tid) for p in providers], (owner.own, tid))
+            if row is not None:
                 owner.index[row.tree_id] = row
         digests = [p.dht.digest(owner.own) for p in providers]
         digests = [d for d in digests if d is not None and verify_digest(owner.pk, d)]
         owner.digest = max(digests, key=lambda d: d.version) if digests else None
+        if owner.digest is not None:
+            tree, _ = digest_tree(owner.index.values())
+            if (tree.root, tree.n) != (owner.digest.root, owner.digest.count):
+                raise VerificationError("the rows the providers hold do not recompute to the latest D")
         for p in providers:
             owner.providers[p.name] = p
         return owner

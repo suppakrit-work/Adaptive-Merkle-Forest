@@ -15,7 +15,9 @@ listens.  The source still hands the tree over only on the owner's signed
 order, which it checks itself.
 
 Calls are served one at a time per provider (one lock), so a provider's state
-is never seen half-changed.  Objects live on disk (amf.provider.store); trees, the
+is never seen half-changed.  The one exception is the pull of a migration: the
+destination does not hold its lock while it waits for the source, which may be
+pulling a tree from it at the same moment.  Objects live on disk (amf.provider.store); trees, the
 Shadow Area and the DHT node live in memory, and HTTP has neither TLS nor
 authentication: both are limits of the prototype, not of the design.
 """
@@ -33,14 +35,25 @@ from amf.provider.store import FileStore
 PROVIDER_CALLS = {"register_owner", "receive_batch", "receive_row", "store_catalog_entries", "discard_pending",
                   "acknowledged", "write", "delete", "decompose", "compose", "export_tree", "import_from",
                   "pending_challenge", "release", "read", "report_reads", "challenge", "recomputed_leaves",
-                  "recomputed_root", "stored_leaves", "stored_root", "halves", "report_mismatches", "stats"}
+                  "recomputed_root", "stored_leaves", "stored_root", "recount", "halves", "round_halves",
+                  "report_mismatches", "stats"}
 DEBUG_CALLS = {"corrupt"}
-DHT_CALLS = {"get", "digest", "lookup", "row_with_path", "live_rows", "tree_ids"}
+DHT_CALLS = {"get", "digest", "lookup", "route", "row_with_path", "live_rows", "tree_ids"}
 MAX_BODY = 256 * 1024 * 1024
 
 
 class NotAllowed(Exception):
     pass
+
+
+class Arrived:
+    """What a source handed over, given to Provider.import_from in place of the source itself."""
+
+    def __init__(self, data):
+        self.data = data
+
+    def export_tree(self, order):
+        return self.data
 
 
 class Service:
@@ -52,15 +65,12 @@ class Service:
 
     def call(self, part: str, method: str, args: list):
         p = self.provider
+        if part == "provider" and method == "import_from":
+            return self._import(*args)
         with self.lock:
             if part == "provider":
                 if method not in PROVIDER_CALLS and not (self.debug and method in DEBUG_CALLS):
                     raise NotAllowed(method)
-                if method == "import_from":
-                    order, source_name = args
-                    if source_name not in self.peers:
-                        raise KeyError(f"no address for provider {source_name}")
-                    return p.import_from(order, self.peers[source_name])
                 return getattr(p, method)(*args)
             if part == "dht":
                 if method not in DHT_CALLS:
@@ -70,6 +80,16 @@ class Service:
                 (own,) = args
                 return p.catalog_copy.get(own, {})
             raise NotAllowed(f"{part}/{method}")
+
+    def _import(self, order, source_name):
+        """The Migrate Pipe at the destination: check, pull without the lock, then check what arrived."""
+        if source_name != order.source or source_name not in self.peers:
+            raise KeyError(f"no address for provider {source_name}")
+        with self.lock:
+            self.provider.check_import(order)
+        data = self.peers[source_name].export_tree(order)
+        with self.lock:
+            return self.provider.import_from(order, Arrived(data))
 
 
 class Handler(BaseHTTPRequestHandler):

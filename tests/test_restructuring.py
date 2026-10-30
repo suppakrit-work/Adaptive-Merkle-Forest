@@ -188,3 +188,71 @@ def test_split_merge_migrate_keep_the_owners_books_consistent():
     assert ab.root == a.root
     for name, data in files.items():
         assert owner.read(name) == data
+
+
+# ---- a destination or a source that does not play along ------------------------------------
+
+def test_the_destination_must_answer_every_position_the_owner_asks():
+    for lie in (lambda real: lambda own, tid, pos: [],
+                lambda real: lambda own, tid, pos: real(own, tid, [0] * len(pos))):
+        owner, provs, files, prov, row = big_image_tree(40)
+        c = provs["C"]
+        c.pending_challenge = lie(c.pending_challenge)
+        with pytest.raises(VerificationError):
+            owner.migrate(row.tree_id, "C")
+        assert owner.index[row.tree_id].provider == "A" and row.key not in c.shadow
+
+
+def test_a_release_keeps_the_objects_of_a_tree_that_came_back():
+    owner, provs, files, prov, row = big_image_tree(12)
+    owner.migrate(row.tree_id, "C")
+    owner.migrate(row.tree_id, "A")                              # back before A was told to release
+    assert owner.release(row.tree_id, "A") == 0
+    assert all(owner.read(n) == d for n, d in files.items())
+
+
+def test_a_release_keeps_the_objects_of_half_a_tree_that_came_back():
+    owner, provs, files, prov, row = big_image_tree(12)
+    owner.migrate(row.tree_id, "C")
+    a, b, _ = owner.split(row.tree_id)
+    owner.migrate(a.tree_id, "A")
+    assert owner.release(row.tree_id, "A") == b.count            # only the half that stayed away
+    assert all(owner.read(n) == d for n, d in files.items())
+
+
+def test_an_old_migration_order_does_not_open_the_pipe_again():
+    owner, provs, files, prov, row = big_image_tree(10)
+    stale = sign_order(owner.sk, Order("migrate", owner.own, (row.tree_id,), source="A", destination="C",
+                                       version=row.version - 1))
+    with pytest.raises(PermissionError):
+        prov.export_tree(stale)
+    ids, cts = prov.export_tree(sign_order(owner.sk, replace(stale, version=row.version)))
+    assert len(ids) == len(cts) == 10
+
+
+def test_a_check_that_fails_in_any_way_leaves_nothing_pending():
+    owner, provs, files, prov, row = big_image_tree(20)
+    _lie_on(prov, "decompose", lambda anns: [anns[0][:3], anns[1]])     # an announcement cut short
+    with pytest.raises(ValueError):
+        owner.split(row.tree_id)
+    assert prov.shadow == {} and owner.index[row.tree_id] == row
+
+
+def test_evacuation_tries_another_destination_when_one_fails():
+    owner, provs = world()
+    files = fill(owner, 30)
+    _, row = tree_of(owner, provs, "image")
+    provs["B"].pending_challenge = lambda own, tid, pos: []          # B, first in line, shows nothing
+    (moved,) = owner.evacuate("A")
+    assert moved.tree_id == row.tree_id and moved.provider == "C"
+    assert all(owner.read(n) == d for n, d in files.items())
+
+
+def test_evacuation_stops_when_the_source_no_longer_recomputes_the_signed_root():
+    owner, provs = world()
+    fill(owner, 30)
+    _, row = tree_of(owner, provs, "image")
+    provs["A"].corrupt(provs["A"].live[row.key].ids[2])              # damaged, and not repaired first
+    with pytest.raises(VerificationError, match="localize and repair"):
+        owner.evacuate("A")
+    assert owner.index[row.tree_id].provider == "A"

@@ -291,8 +291,27 @@ class DHTNode:
         i = [r.key for r in ordered].index(row.key)
         return row, i, len(ordered), tree.path(i)
 
+    def route(self, obj_id: bytes):
+        """What a reader asks a node, in one answer from one view of the table: the live row that covers
+        the identifier, its position, T and path to D, and the owner's D as this node holds it."""
+        own = obj_id[:OWN_LEN]
+        row = self.lookup(obj_id)
+        if row is None:
+            return None, None, 0, [], self.digest(own)
+        _row, i, t, path = self.row_with_path(own, row.tree_id)
+        return row, i, t, path, self.digest(own)
+
 
 def freshest(rows) -> IndexRow | None:
     """What a reader other than the owner does: ask several nodes, keep the highest version."""
     rows = [r for r in rows if r is not None]
     return max(rows, key=lambda r: r.version) if rows else None
+
+
+def freshest_signed(pk, rows, key) -> IndexRow | None:
+    """The highest version among the rows for key (own, tid) whose signature verifies under pk, so a node
+    that hands out a forged row with a high version only costs one signature check."""
+    for r in sorted((r for r in rows if r is not None and r.key == key), key=lambda r: r.version, reverse=True):
+        if verify_row(pk, r):
+            return r
+    return None

@@ -129,8 +129,11 @@ def main():
     a, b, _ = m.run("Phase 4: split at the median", lambda: owner.split(image.tree_id))
     ab = m.run("Phase 4: merge the halves back", lambda: owner.merge(a.tree_id, b.tree_id))
     print(f"    owner hashes for both checks: 2 (one each); root unchanged: {ab.root == image.root}")
-    m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
-    m.run("Phase 4: release the copy at A", lambda: owner.release(ab.tree_id, "A"))
+    moved = m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
+    later = Auditor([owner.pk], s=8).audit_tree(moved, plist)
+    print(f"    a later audit of B passes: {later.ok}; only then is A told to release")
+    if later.ok:
+        m.run("Phase 4: release the copy at A", lambda: owner.release(ab.tree_id, "A"))
 
     if debug:
         video = next(r for r in owner.live_rows() if r.provider == "B" and r.count >= 2)
@@ -147,7 +150,8 @@ def main():
         moved = m.run("evacuate B (repair, then migrate)",
                       lambda: owner.evacuate("B", repairs={name: (b"repaired copy", "video")}))
         for row in moved:
-            owner.release(row.tree_id, "B")
+            if Auditor([owner.pk], s=8).audit_tree(row, plist).ok:
+                owner.release(row.tree_id, "B")
         print(f"    moved {len(moved)} tree(s) away from B: {[r.provider for r in moved]}")
     else:
         print("    (providers not in --debug: fault injection skipped)")

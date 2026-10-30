@@ -45,9 +45,9 @@ from amf.provider import Pending, Provider, TreeState
 ANNOUNCE = TREE_ID_LEN + 2 * BOUND_LEN + 32 + 8
 PROVIDER_CALLS = ("write", "delete", "decompose", "compose", "export_tree", "import_from", "pending_challenge",
                   "release", "receive_batch", "store_catalog_entries", "discard_pending", "acknowledged", "read",
-                  "challenge", "recomputed_root", "recomputed_leaves", "stored_root", "stored_leaves", "halves",
-                  "report_mismatches")
-DHT_CALLS = ("lookup", "row_with_path", "get")              # the DHT node runs at the provider too
+                  "challenge", "recomputed_root", "recomputed_leaves", "stored_root", "stored_leaves", "recount",
+                  "halves", "round_halves", "report_mismatches")
+DHT_CALLS = ("lookup", "route", "row_with_path", "get")     # the DHT node runs at the provider too
 
 
 class Clock:

@@ -16,12 +16,13 @@ cost O(log n) expected.
 The encrypted copy at every provider is kept entry by entry: each change sends
 only the new entry, encrypted on its own under a key derived from MK and
 tagged with the version of D; on recovery the highest version of each entry
-wins.  The type table travels the same way.
+wins, among the entries that open under MK.  The type table travels the same way.
 """
 import json
 import os
 import random
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from amf.common import crypto
@@ -263,6 +264,26 @@ class Catalog:
             elif not data.get("deleted"):
                 cat.put(data["name"], slot, bytes.fromhex(data["leaf"]))
         return cat, types
+
+    @classmethod
+    def from_copies(cls, mk: bytes, copies) -> tuple:
+        """Rebuild from the copies of several providers: for every slot, the highest version that opens
+        under MK.  A blob that does not open (damaged, or planted by a provider) is passed over."""
+        candidates: dict = {}
+        for copy in copies:
+            for slot, entry in (copy.items() if isinstance(copy, dict) else ()):
+                if isinstance(slot, bytes) and isinstance(entry, (tuple, list)) and len(entry) == 2:
+                    candidates.setdefault(slot, []).append(tuple(entry))
+        good = {}
+        for slot, entries in candidates.items():
+            for version, blob in sorted(entries, key=lambda e: e[0], reverse=True):
+                try:
+                    open_entry(mk, slot, version, blob)
+                except (InvalidTag, ValueError, TypeError, AttributeError, OverflowError):
+                    continue
+                good[slot] = (version, blob)
+                break
+        return cls.from_copy(mk, good)
 
 
 def _entry_key(mk: bytes) -> bytes:

@@ -292,3 +292,15 @@ def test_node_keeps_only_a_newer_digest():
 def test_row_leaf_covers_the_whole_row():
     r = sign_row(SK, make_row())
     assert row_leaf(r) != row_leaf(replace(r, count=1)) and len(row_leaf(r)) == 32
+
+
+
+def test_route_answers_a_reader_in_one_go():
+    n = node()
+    rows = [sign_row(SK, make_row(tag=t)) for t in (1, 2, 3)]
+    d = signed_digest(SK, rows, 1)
+    assert n.accept_batch(rows, d)
+    k_id = crypto.derive_id_key(bytes(32))
+    row, i, T, path, got = n.route(crypto.make_id(k_id, OWN, 2, "x"))
+    assert row == rows[1] and T == 3 and got == d and verify_row_in_digest(d, row, i, path)
+    assert n.route(crypto.make_id(k_id, OWN, 9, "x"))[0] is None

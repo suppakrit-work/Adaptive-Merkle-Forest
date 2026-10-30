@@ -13,10 +13,9 @@ leaf so that a reader who holds the identifier can tell that the leaf it is
 shown belongs to that object.  The provider gets the pair (id, CT).
 """
 import hashlib
-import hmac
 import os
 
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -53,7 +52,9 @@ def make_id(k_id: bytes, own: bytes, type_tag: int, name: str) -> bytes:
         raise ValueError("the owner's tag is 32 bytes")
     if not 0 <= type_tag <= 255:
         raise ValueError("a type tag must fit in one byte")
-    mac = hmac.new(k_id, name.encode("utf-8"), hashlib.sha256).digest()
+    h = hmac.HMAC(k_id, hashes.SHA256())
+    h.update(name.encode("utf-8"))
+    mac = h.finalize()
     return own + bytes([type_tag]) + mac
 
 

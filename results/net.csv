@@ -1,14 +1,14 @@
 step,runs,median_ms,calls,sent_bytes,received_bytes
-"Phase 1: register, open 3 trees",1,46.19,24.0,10899,507
-Phase 2: upload one object,60,16.24,8.0,5555,531
-Phase 3: owner reads one object,20,2.76,1.0,108,1777
-"Phase 3: data user reads, with D",20,8.68,3.0,314,3190
-"auditor: whole owner, s = 8",1,50.26,15.0,1432,49849
-Phase 4: split at the median,1,8.67,4.0,7251,889
-Phase 4: merge the halves back,1,11.92,4.0,7091,473
-Phase 4: migrate A -> B (pipe),1,119.22,5.0,3250,14848
-Phase 4: release the copy at A,1,4.96,1.0,336,13
-Phase 5: localize (rounds),1,18.11,8.0,835,3242
-Phase 5: localize (one exchange),1,10.19,4.0,402,2277
-"evacuate B (repair, then migrate)",1,231.58,18.0,10713,30552
-recovery from the providers,1,70.72,27.0,2340,66177
+"Phase 1: register, open 3 trees",1,49.73,24.0,10899,507
+Phase 2: upload one object,60,15.53,8.0,5555,531
+Phase 3: owner reads one object,20,2.58,1.0,108,1769
+"Phase 3: data user reads, with D",20,9.12,4.0,432,4884
+"auditor: whole owner, s = 8",1,36.65,15.0,1438,49909
+Phase 4: split at the median,1,8.37,4.0,7251,889
+Phase 4: merge the halves back,1,7.03,4.0,7091,473
+Phase 4: migrate A -> B (pipe),1,102.69,5.0,3250,14848
+Phase 4: release the copy at A,1,4.24,1.0,336,13
+Phase 5: localize (rounds),1,20.34,8.0,890,3252
+Phase 5: localize (one exchange),1,9.84,4.0,402,2277
+"evacuate B (repair, then migrate)",1,232.62,18.0,10713,30552
+recovery from the providers,1,71.22,27.0,2340,66177
