@@ -1,0 +1,14 @@
+step,runs,median_ms,calls,sent_bytes,received_bytes
+"Phase 1: register, open 3 trees",1,43.64,24.0,10881,507
+Phase 2: upload one object,60,14.52,8.0,5549,529
+Phase 3: owner reads one object,20,2.7,1.0,108,1763
+"Phase 3: data user reads, with D",20,7.86,3.0,314,3183
+"auditor: whole owner, s = 8",1,41.62,15.0,1273,50560
+Phase 4: split at the median,1,8.52,4.0,7232,885
+Phase 4: merge the halves back,1,8.36,4.0,7073,471
+Phase 4: migrate A -> B (pipe),1,116.82,5.0,3244,14846
+Phase 4: release the copy at A,1,4.7,1.0,336,13
+Phase 5: localize (rounds),1,21.27,8.0,835,3242
+Phase 5: localize (one exchange),1,11.01,4.0,402,2277
+"evacuate B (repair, then migrate)",1,223.16,18.0,10695,30546
+recovery from the providers,1,63.91,27.0,2181,67275

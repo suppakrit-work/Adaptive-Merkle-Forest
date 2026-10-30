@@ -1,0 +1,30 @@
+# Three providers on one machine: A, B, C on localhost:8001-8003.
+#   docker compose up --build -d      start (again with --build after a code change)
+#   python net_demo.py                run the owner against them
+#   docker compose down -v            stop them and wipe their data
+# --debug lets net_demo.py damage an object on purpose; leave it out anywhere real.
+x-provider: &provider
+  build: .
+  image: amf-provider
+
+services:
+  provider-a:
+    <<: *provider
+    command: ["--name", "A", "--peer", "B=http://provider-b:8000", "--peer", "C=http://provider-c:8000", "--debug"]
+    ports: ["8001:8000"]
+    volumes: ["data-a:/data"]
+  provider-b:
+    <<: *provider
+    command: ["--name", "B", "--peer", "A=http://provider-a:8000", "--peer", "C=http://provider-c:8000", "--debug"]
+    ports: ["8002:8000"]
+    volumes: ["data-b:/data"]
+  provider-c:
+    <<: *provider
+    command: ["--name", "C", "--peer", "A=http://provider-a:8000", "--peer", "B=http://provider-b:8000", "--debug"]
+    ports: ["8003:8000"]
+    volumes: ["data-c:/data"]
+
+volumes:
+  data-a:
+  data-b:
+  data-c:
