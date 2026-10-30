@@ -49,7 +49,7 @@ def test_a_withheld_row_is_caught_against_the_owners_d():
     owner, provs, files, plist, aud = setup()
     prov, row = tree_of(owner, provs, "document")
     for p in plist:
-        del p.dht.rows[row.key]                                    # every node hides one tree
+        p.dht.rows = {k: r for k, r in p.dht.rows.items() if k != row.key}
     rep = aud.audit_owner(owner.digest, plist)
     assert not rep.digest_ok and not rep.ok and len(rep.trees) == 2
 

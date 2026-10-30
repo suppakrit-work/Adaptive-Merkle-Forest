@@ -83,7 +83,7 @@ class Auditor:
         return row
 
     def live_rows(self, own, providers):
-        tids = {tid for p in providers for (o, tid) in p.dht.rows if o == own}
+        tids = {tid for p in providers for tid in p.dht.tree_ids(own)}
         rows = [self._row(own, tid, providers) for tid in tids]
         return [r for r in rows if not r.retired]
 

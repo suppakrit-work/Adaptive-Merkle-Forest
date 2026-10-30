@@ -416,9 +416,9 @@ class Owner:
         owner = cls(mk=mk, sk=sk, s=s)
         copies = [p.catalog_copy.get(owner.own, {}) for p in providers]
         owner.catalog, owner.type_table = Catalog.from_copy(mk, newest(*copies))
-        keys = {k for p in providers for k in p.dht.rows if k[0] == owner.own}
-        for key in keys:
-            row = freshest([p.dht.get(*key) for p in providers])
+        tids = {tid for p in providers for tid in p.dht.tree_ids(owner.own)}
+        for tid in tids:
+            row = freshest([p.dht.get(owner.own, tid) for p in providers])
             if row is not None and verify_row(owner.pk, row):
                 owner.index[row.tree_id] = row
         digests = [p.dht.digest(owner.own) for p in providers]

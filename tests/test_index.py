@@ -2,6 +2,8 @@
 import hashlib
 from dataclasses import replace
 
+import pytest
+
 from amf.common import crypto
 from amf.common.index import (DHTNode, ForestDigest, IndexRow, digest_tree, freshest, generate_signing_key,
                        id_to_int, new_tree_id, owner_space, retire, row_leaf, sign_digest, sign_row,
@@ -151,6 +153,63 @@ def test_lookup_routes_an_identifier_to_its_live_tree():
     assert n.lookup(crypto.make_id(k_id, OWN, 1, "r.pdf")).tree_id == w.tree_id
     assert n.lookup(crypto.make_id(k_id, OWN2, 1, "r.pdf")).tree_id == v.tree_id
     assert n.lookup(crypto.make_id(k_id, OWN, 7, "no tree for this type")) is None
+
+
+def test_lookup_follows_a_split_and_a_merge():
+    n = node()
+    k_id = crypto.derive_id_key(bytes(32))
+    ids = [crypto.make_id(k_id, OWN, 1, f"f{i}") for i in range(40)]
+    whole = sign_row(SK, make_row(tag=1))
+    assert n.accept(whole)
+    p = sorted(id_to_int(i) for i in ids)[20]
+    a = sign_row(SK, replace(make_row(), lo=whole.lo, hi=p))
+    b = sign_row(SK, replace(make_row(), lo=p, hi=whole.hi))
+    assert n.accept_batch([a, b, sign_row(SK, retire(whole))])
+    for i in ids:
+        assert n.lookup(i).tree_id == (a.tree_id if id_to_int(i) < p else b.tree_id)
+    ab = sign_row(SK, replace(make_row(), lo=whole.lo, hi=whole.hi))
+    assert n.accept_batch([ab, sign_row(SK, retire(a)), sign_row(SK, retire(b))])
+    assert all(n.lookup(i).tree_id == ab.tree_id for i in ids)
+
+
+def test_many_owners_keep_their_rows_apart():
+    sks = [generate_signing_key() for _ in range(30)]
+    n = DHTNode([sk.public_key() for sk in sks])
+    k_id = crypto.derive_id_key(bytes(32))
+    rows = {}
+    for sk in sks:
+        own = crypto.owner_tag(sk.public_key())
+        rows[own] = [sign_row(sk, make_row(own=own, tag=t)) for t in (1, 2, 3)]
+        assert n.accept_batch(rows[own])
+    for own, mine in rows.items():
+        assert sorted(n.tree_ids(own)) == sorted(r.tree_id for r in mine)
+        assert sorted(n.live_rows(own), key=lambda r: r.tree_id) == sorted(mine, key=lambda r: r.tree_id)
+        for t, row in zip((1, 2, 3), mine):
+            assert n.lookup(crypto.make_id(k_id, own, t, "x")) == row
+        assert n.lookup(crypto.make_id(k_id, own, 9, "x")) is None
+    assert len(n.rows) == 90 and n.tree_ids(bytes(32)) == []
+
+
+def test_retired_trees_are_still_listed_for_their_owner():
+    n = node(PK, PK2)
+    old = sign_row(SK, make_row())
+    other = sign_row(SK2, make_row(own=OWN2))
+    assert n.accept(old) and n.accept(other) and n.accept(sign_row(SK, retire(old)))
+    assert n.tree_ids(OWN) == [old.tree_id] and n.live_rows(OWN) == []
+    assert n.lookup(crypto.make_id(crypto.derive_id_key(bytes(32)), OWN, 1, "x")) is None
+
+
+def test_the_table_is_replaced_whole_never_edited_in_place():
+    n = node()
+    k_id = crypto.derive_id_key(bytes(32))
+    v1 = sign_row(SK, make_row(provider="A"))
+    assert n.accept(v1)
+    before = dict(n.rows)
+    assert n.accept(sign_row(SK, replace(v1, provider="B", version=2)))
+    with pytest.raises(TypeError):
+        n.rows[v1.key] = v1
+    n.rows = before                                     # a node rolled back: the lookup follows
+    assert n.lookup(crypto.make_id(k_id, OWN, 1, "x")).provider == "A"
 
 
 def test_migration_keeps_the_tree_identifier():

@@ -190,10 +190,8 @@ class RemoteDHT:
     def live_rows(self, own=None):
         return self._p.call("dht", "live_rows", own)
 
-    @property
-    def rows(self) -> dict:
-        """The keys (own, tid) of every row the node holds; fetch a row itself with get()."""
-        return dict.fromkeys(self._p.call("dht", "keys"))
+    def tree_ids(self, own):
+        return self._p.call("dht", "tree_ids", own)
 
 
 class RemoteCatalogCopy:

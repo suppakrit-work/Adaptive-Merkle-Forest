@@ -35,7 +35,7 @@ PROVIDER_CALLS = {"register_owner", "receive_batch", "receive_row", "store_catal
                   "pending_challenge", "release", "read", "report_reads", "challenge", "recomputed_leaves",
                   "recomputed_root", "stored_leaves", "stored_root", "halves", "report_mismatches", "stats"}
 DEBUG_CALLS = {"corrupt"}
-DHT_CALLS = {"get", "digest", "lookup", "row_with_path", "live_rows", "keys"}
+DHT_CALLS = {"get", "digest", "lookup", "row_with_path", "live_rows", "tree_ids"}
 MAX_BODY = 256 * 1024 * 1024
 
 
@@ -65,8 +65,6 @@ class Service:
             if part == "dht":
                 if method not in DHT_CALLS:
                     raise NotAllowed(method)
-                if method == "keys":
-                    return list(p.dht.rows)
                 return getattr(p.dht, method)(*args)
             if part == "catalog" and method == "get":
                 (own,) = args

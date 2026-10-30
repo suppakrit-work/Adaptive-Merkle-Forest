@@ -26,7 +26,10 @@ SHA-256("amf/row-leaf" || payload).
 """
 import hashlib
 import os
+from bisect import bisect_left, bisect_right, insort
 from dataclasses import dataclass, replace
+from operator import itemgetter
+from types import MappingProxyType
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -182,27 +185,56 @@ def verify_row_in_digest(d: ForestDigest, row: IndexRow, i: int, path: list) -> 
 # -- a DHT node: one provider's copy of the table -----------------------------
 
 class DHTNode:
+    """One provider's copy of the table, with the rows of each owner kept apart.
+
+    Each owner's live ranges are kept sorted, so a lookup is a binary search
+    over that owner's rows and a batch touches only the rows it carries; the
+    work does not grow with the number of other owners.
+    """
+
     def __init__(self, keys=None):
         self.keys: dict[bytes, object] = {}          # own -> public key (registered at Phase 1)
-        self.rows: dict[tuple, IndexRow] = {}        # (own, tid) -> highest version seen
         self.digests: dict[bytes, ForestDigest] = {}
+        self.rows = {}                               # an empty table and its index
         for pk in (keys or []):
             self.register(pk)
+
+    @property
+    def rows(self):
+        """(own, tid) -> highest version seen, read-only; assigning a whole table rebuilds the index."""
+        return MappingProxyType(self._rows)
+
+    @rows.setter
+    def rows(self, rows: dict) -> None:
+        self._rows: dict[tuple, IndexRow] = {}
+        self._by_own: dict[bytes, dict[bytes, IndexRow]] = {}   # own -> tid -> row
+        self._spans: dict[bytes, list[tuple[int, bytes]]] = {}  # own -> (lo, tid) of live rows, sorted
+        for row in rows.values():
+            self._put(row)
 
     def register(self, pk) -> bytes:
         own = owner_tag(pk)
         self.keys[own] = pk
         return own
 
-    def _acceptable(self, row: IndexRow, held: dict) -> bool:
+    def _acceptable(self, row: IndexRow, held: IndexRow | None) -> bool:
         pk = self.keys.get(row.own)
         if pk is None or not verify_row(pk, row):
             return False
         lo, hi = owner_space(row.own)
         if not (lo <= row.lo <= row.hi <= hi):
             return False
-        prev = held.get(row.key)
-        return prev is None or row.version > prev.version
+        return held is None or row.version > held.version
+
+    def _put(self, row: IndexRow) -> None:
+        prev = self._rows.get(row.key)
+        spans = self._spans.setdefault(row.own, [])
+        if prev is not None and not prev.retired:
+            del spans[bisect_left(spans, (prev.lo, prev.tree_id))]
+        if not row.retired:
+            insort(spans, (row.lo, row.tree_id))
+        self._rows[row.key] = row
+        self._by_own.setdefault(row.own, {})[row.tree_id] = row
 
     def accept(self, row: IndexRow) -> bool:
         """Store the row only if the signature verifies, the range is the owner's and the version is higher."""
@@ -210,9 +242,10 @@ class DHTNode:
 
     def accept_batch(self, rows, digest: ForestDigest | None = None) -> bool:
         """The rows of one operation, applied whole or not at all, with the owner's new digest."""
-        staged = dict(self.rows)
+        staged = {}
         for row in rows:
-            if not self._acceptable(row, staged):
+            held = staged[row.key] if row.key in staged else self._rows.get(row.key)
+            if not self._acceptable(row, held):
                 return False
             staged[row.key] = row
         if digest is not None:
@@ -220,26 +253,34 @@ class DHTNode:
             if pk is None or not verify_digest(pk, digest) or (prev and digest.version <= prev.version):
                 return False
             self.digests[digest.own] = digest
-        self.rows = staged
+        for row in staged.values():
+            self._put(row)
         return True
 
     def get(self, own: bytes, tree_id: bytes) -> IndexRow | None:
-        return self.rows.get((own, tree_id))
+        return self._rows.get((own, tree_id))
 
     def digest(self, own: bytes) -> ForestDigest | None:
         return self.digests.get(own)
 
+    def tree_ids(self, own: bytes) -> list[bytes]:
+        """Every tree identifier the node holds for this owner, live or retired."""
+        return list(self._by_own.get(own, {}))
+
     def live_rows(self, own: bytes | None = None) -> list[IndexRow]:
-        return [r for r in self.rows.values() if not r.retired and (own is None or r.own == own)]
+        rows = self._rows.values() if own is None else self._by_own.get(own, {}).values()
+        return [r for r in rows if not r.retired]
 
     def lookup(self, obj_id: bytes) -> IndexRow | None:
-        """Routing: which live tree holds this identifier?"""
+        """Routing: which live tree holds this identifier?  A binary search over the owner's live ranges."""
         v = id_to_int(obj_id)
         own = obj_id[:OWN_LEN]
-        for r in self.live_rows(own):
-            if r.covers(v):
-                return r
-        return None
+        spans = self._spans.get(own, [])
+        i = bisect_right(spans, v, key=itemgetter(0)) - 1
+        if i < 0:
+            return None
+        row = self._by_own[own][spans[i][1]]
+        return row if row.covers(v) else None
 
     def row_with_path(self, own: bytes, tree_id: bytes):
         """The row and its path to D: (row, position among the live rows, T, sibling hashes)."""

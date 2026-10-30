@@ -32,6 +32,7 @@ python -m pytest -q
 | `demo.py` | the five phases on one machine, step by step | screen |
 | `bench.py` | cost of each operation for 10^3 to 10^5 objects, with the baselines of Section V | `results/bench.csv` |
 | `workload.py` | AMF against a forest that never restructures, under uniform and Zipf access | `results/workload.csv` |
+| `owners.py` | 1 to 10,000 owners sharing three providers: one owner's upload, read and audit, and a DHT lookup, as the number of owners grows | `results/owners.csv` |
 | `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP | `results/net.csv` |
 
 Three providers in Docker on one machine:
