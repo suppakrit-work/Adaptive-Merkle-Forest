@@ -1,4 +1,4 @@
-"""Tests for amf/localize.py -- Phase 5 and Algorithm 2."""
+"""Tests for amf/localize.py -- Phase 6 and Algorithm 5."""
 import random
 
 import pytest
@@ -90,7 +90,7 @@ def test_a_false_stored_value_is_caught_in_the_round_it_is_told():
         return out
     prov.halves = lie
     rep = loc.localize(row.tree_id)
-    assert rep.verdict == "stored-hashes-damaged" and "node 3" in rep.note       # Algorithm 2, line 8
+    assert rep.verdict == "stored-hashes-damaged" and "node 3" in rep.note       # Algorithm 5, line 8
 
 
 def test_a_refusal_is_charged_at_the_level_of_the_tree():
@@ -102,7 +102,7 @@ def test_a_refusal_is_charged_at_the_level_of_the_tree():
 
 
 def test_a_false_recomputed_value_is_seen_when_the_object_is_read():
-    # Algorithm 2, line 16: "otherwise P reported a wrong rec"
+    # Algorithm 5, line 16: "otherwise P reported a wrong rec"
     owner, prov, row, loc = world(16)
     real = prov.recomputed_leaves
 

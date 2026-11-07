@@ -1,4 +1,4 @@
-"""Tests for Phase 4 and Algorithm 1 -- decomposition, composition, migration, evacuation."""
+"""Tests for Phase 4 and Algorithms 2 and 3 -- decomposition, composition, migration, evacuation."""
 from dataclasses import replace
 
 import pytest
@@ -23,7 +23,7 @@ def test_split_at_the_median_is_checked_with_one_hash():
     owner, provs, files, prov, row = big_image_tree(41)
     owner.hashes = 0
     a, b, gone = owner.split(row.tree_id)
-    assert owner.hashes == 1                                      # Algorithm 1, line 6
+    assert owner.hashes == 1                                      # Algorithm 3, line 6
     assert (a.count, b.count) == (left_size(41), 41 - left_size(41))
     assert node_hash(a.root, b.root) == row.root and gone.retired and gone.version == row.version + 1
     assert a.hi == b.lo and (a.lo, b.hi) == (row.lo, row.hi)

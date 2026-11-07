@@ -151,8 +151,8 @@ def main():
     assert all(owner.read(n) == data for n, data in files.items())
     show_index(owner, "Distributed Index after a split and a merge")
 
-    # ---- Phase 5 ----------------------------------------------------------------------
-    say("\n[5] Phase 5: one byte of one stored ciphertext at B changes (a disk, a bug, an intruder).")
+    # ---- Phase 6 ----------------------------------------------------------------------
+    say("\n[5] Phase 6: one byte of one stored ciphertext at B changes (a disk, a bug, an intruder).")
     video = trees_of(owner, 2)[0]
     victim = owner.catalog.id_at(video.lo, 4)
     victim_name = owner.catalog.name_of(victim)
@@ -204,8 +204,8 @@ def main():
     assert all(owner.read(n) == data for n, data in files.items())
     show_index(owner, "Distributed Index after the migration")
 
-    # ---- Algorithm 1 refusing a lie ---------------------------------------------------------
-    say("\n[7] Algorithm 1: a provider that announces a wrong root at upload is refused, nothing changes.")
+    # ---- Algorithm 3 refusing a lie ---------------------------------------------------------
+    say("\n[7] Algorithm 3: a provider that announces a wrong root at upload is refused, nothing changes.")
     target = trees_of(owner, 1)[0].provider
     real_write = provs[target].write
     provs[target].write = lambda i, c: (lambda t: t[:3] + (bytes(32),) + t[4:])(real_write(i, c))

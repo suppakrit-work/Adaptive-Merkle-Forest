@@ -1,4 +1,4 @@
-"""The Data Owner -- Section III-A 1), Phases 1, 2, 3 and 4, Algorithm 1.
+"""The Data Owner -- Section III-A 1), Phases 1, 2, 3 and 4, Algorithms 1 and 3.
 
 Three managers, all on the owner's machine:
 
@@ -13,7 +13,7 @@ Three managers, all on the owner's machine:
                         or merged (policy.py); this file keeps the writes the
                         owner made, per half of each tree.
 
-"No root gets into the index without passing Algorithm 1": the owner checks
+"No root gets into the index without passing Algorithm 3": the owner checks
 every announced tree against its own order and its own catalog, and computes
 the root itself (n - 1 hashes), or with one hash when a tree is split at its
 median or two trees of nearly equal size are merged (Lemma 1).
@@ -184,7 +184,7 @@ class Owner:
         return leaves[:j] + [leaf] + leaves[j:]
 
     def _check_root(self, announced_root: bytes, leaves: list) -> None:
-        """Algorithm 1, line 12: the root over the catalog's leaf values, n - 1 hashes."""
+        """Algorithm 3, line 12: the root over the catalog's leaf values, n - 1 hashes."""
         self.hashes += max(len(leaves) - 1, 0)
         if root_of(leaves) != announced_root:
             raise VerificationError("the announced root is not the root over the owner's own leaves")
@@ -268,14 +268,14 @@ class Owner:
         """What a reader other than the owner gets from the owner: the identifier and the current D."""
         return self.identifier(name, file_type), self.digest
 
-    # -- Phase 4: restructuring, checked by Algorithm 1 -------------------------------
+    # -- Phase 4: restructuring, checked by Algorithm 3 -------------------------------
 
     def _order(self, kind, trees, new_ids=(), boundary=0, source="", destination="", version=0) -> Order:
         return sign_order(self.sk, Order(kind, self.own, tuple(trees), tuple(new_ids), boundary,
                                          source, destination, version))
 
     def _check_announced_range_count(self, ann, lo: int, hi: int) -> None:
-        """Algorithm 1, lines 1-3: the range the order implies, the count of catalog identifiers in it."""
+        """Algorithm 3, lines 1-3: the range the order implies, the count of catalog identifiers in it."""
         _tid, a_lo, a_hi, _root, n = ann
         if (a_lo, a_hi) != (lo, hi):
             raise VerificationError("the announced range is not the one the order implies")
@@ -306,7 +306,7 @@ class Owner:
                 self._check_announced_range_count(ann_b, p, row.hi)
                 r_a, r_b = ann_a[3], ann_b[3]
                 if row.count >= 2 and ann_b[4] >= 1 and p == self.median_boundary(row):
-                    self.hashes += 1                                       # Algorithm 1, line 6
+                    self.hashes += 1                                       # Algorithm 3, line 6
                     if node_hash(r_a, r_b) != row.root:
                         raise VerificationError("H(r_a || r_b) is not the signed root")
                 else:
@@ -336,7 +336,7 @@ class Owner:
                 self._check_announced_range_count(ann, a.lo, b.hi)
                 r_new, n_new = ann[3], ann[4]
                 if b.count >= 1 and a.count == left_size(n_new):
-                    self.hashes += 1                                       # Algorithm 1, line 7
+                    self.hashes += 1                                       # Algorithm 3, line 7
                     if node_hash(a.root, b.root) != r_new:
                         raise VerificationError("H(r_a || r_b) is not the announced root")
                 else:
@@ -361,9 +361,9 @@ class Owner:
             if ann[0] != tree_id:
                 raise VerificationError("the destination announced another tree")
             self._check_announced_range_count(ann, row.lo, row.hi)
-            if ann[3] != row.root:                                     # Algorithm 1, line 8
+            if ann[3] != row.root:                                     # Algorithm 3, line 8
                 raise VerificationError("a migration changes nothing inside the tree")
-            self._challenge_pending(dst, row)                          # Algorithm 1, line 9
+            self._challenge_pending(dst, row)                          # Algorithm 3, line 9
         except Exception:
             dst.discard_pending(self.own, tree_id)
             raise
@@ -394,7 +394,7 @@ class Owner:
         return self.providers[source].release(order)
 
     def evacuate(self, provider_name: str, trees=None, repairs=None) -> list:
-        """After a failed check of Phase 3 or Phase 5: repair the named objects through Phase 2,
+        """FailedCheck of Algorithm 2, after a failed check of Phase 3, 5 or 6: repair the named objects through Phase 2,
         then move the trees that failed (all of that provider's trees when trees is None) to the
         providers holding the fewest of the owner's trees.  repairs: {name: (data, type) or None}."""
         for name, fix in (repairs or {}).items():

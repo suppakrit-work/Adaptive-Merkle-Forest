@@ -1,4 +1,4 @@
-"""Distributed Index -- Section III-A 4), Table I, Definition 2.
+"""Distributed Index -- Section III-A 4), III-B 2) and 3), Table I, Definition 2.
 
 One table with one row per tree, live or retired:
 
@@ -18,6 +18,15 @@ live rows in tree-identifier order, signed with a version of its own and sent
 with the rows.  A reader checks its row against D with a path of
 ceil(log2 T) hashes; an auditor that takes all the rows recomputes D.
 
+Structures (III-B 2): a node keeps the live rows in one B+ tree keyed by lo,
+across owners, since live ranges never overlap; the row that covers an
+identifier is the one with the largest lo not above it, and then the
+identifier must be below that row's hi.  A table keyed by (own, tid) holds
+the latest row of every tree, live or retired, and is what the node consults
+before it accepts a row.  The tree of D is kept per owner and rebuilt when
+that owner's rows change, so a lookup answers with the row, its position
+under D and its path without hashing the rows again.
+
 Prototype decisions: identifiers are compared as 65-byte big-endian integers;
 a range is half-open [lo, hi); the tree opened for a type tag covers every
 identifier that starts with own || type tag.  Signatures: Ed25519 over a
@@ -26,14 +35,13 @@ SHA-256("amf/row-leaf" || payload).
 """
 import hashlib
 import os
-from bisect import bisect_left, bisect_right, insort
 from dataclasses import dataclass, replace
-from operator import itemgetter
 from types import MappingProxyType
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from amf.common.bptree import BPlusTree
 from amf.common.crypto import HMAC_LEN, ID_LEN, OWN_LEN, owner_tag
 from amf.common.merkle import MerkleTree, verify_path
 
@@ -186,10 +194,11 @@ def verify_row_in_digest(d: ForestDigest, row: IndexRow, i: int, path: list) -> 
 # -- a DHT node: one provider's copy of the table -----------------------------
 
 class DHTNode:
-    """One provider's copy of the table, with the rows of each owner kept apart.
+    """One provider's copy of the table: a B+ tree on lo over the live rows of every
+    owner, a table on (own, tid) over every row, and the tree of D per owner.
 
-    Each owner's live ranges are kept sorted, so a lookup is a binary search
-    over that owner's rows and a batch touches only the rows it carries; the
+    A lookup is one descent of the B+ tree, O(log_b R) for R live rows, and a
+    batch touches only the rows it carries and the digest tree of its owner; the
     work does not grow with the number of other owners.
     """
 
@@ -209,9 +218,12 @@ class DHTNode:
     def rows(self, rows: dict) -> None:
         self._rows: dict[tuple, IndexRow] = {}
         self._by_own: dict[bytes, dict[bytes, IndexRow]] = {}   # own -> tid -> row
-        self._spans: dict[bytes, list[tuple[int, bytes]]] = {}  # own -> (lo, tid) of live rows, sorted
+        self._live = BPlusTree()                                # lo -> (own, tid) of every live row
+        self._dtrees: dict[bytes, tuple] = {}                   # own -> (D's tree, key -> position)
         for row in rows.values():
             self._put(row)
+        for own in self._by_own:
+            self._rebuild_digest_tree(own)
 
     def register(self, pk) -> bytes:
         own = owner_tag(pk)
@@ -228,14 +240,19 @@ class DHTNode:
         return held is None or row.version > held.version
 
     def _put(self, row: IndexRow) -> None:
+        """A split deletes one key from the B+ tree and inserts two, a merge the other way round,
+        a migration only replaces the value under its key, a retirement deletes the key."""
         prev = self._rows.get(row.key)
-        spans = self._spans.setdefault(row.own, [])
-        if prev is not None and not prev.retired:
-            del spans[bisect_left(spans, (prev.lo, prev.tree_id))]
+        if prev is not None and not prev.retired and self._live.get(prev.lo) == prev.key:
+            self._live.delete(prev.lo)
         if not row.retired:
-            insort(spans, (row.lo, row.tree_id))
+            self._live.insert(row.lo, row.key)
         self._rows[row.key] = row
         self._by_own.setdefault(row.own, {})[row.tree_id] = row
+
+    def _rebuild_digest_tree(self, own: bytes) -> None:
+        tree, ordered = digest_tree(self.live_rows(own))
+        self._dtrees[own] = (tree, {r.key: i for i, r in enumerate(ordered)})
 
     def accept(self, row: IndexRow) -> bool:
         """Store the row only if the signature verifies, the range is the owner's and the version is higher."""
@@ -256,6 +273,8 @@ class DHTNode:
             self.digests[digest.own] = digest
         for row in staged.values():
             self._put(row)
+        for own in {row.own for row in staged.values()}:
+            self._rebuild_digest_tree(own)
         return True
 
     def get(self, own: bytes, tree_id: bytes) -> IndexRow | None:
@@ -273,24 +292,23 @@ class DHTNode:
         return [r for r in rows if not r.retired]
 
     def lookup(self, obj_id: bytes) -> IndexRow | None:
-        """Routing: which live tree holds this identifier?  A binary search over the owner's live ranges."""
+        """Routing: which live tree holds this identifier?  One descent of the B+ tree to the row
+        with the largest lo not above it, then the identifier must be below that row's hi."""
         v = id_to_int(obj_id)
-        own = obj_id[:OWN_LEN]
-        spans = self._spans.get(own, [])
-        i = bisect_right(spans, v, key=itemgetter(0)) - 1
-        if i < 0:
+        hit = self._live.predecessor(v)
+        if hit is None:
             return None
-        row = self._by_own[own][spans[i][1]]
-        return row if row.covers(v) else None
+        row = self._rows[hit[1]]
+        return row if row.own == obj_id[:OWN_LEN] and row.covers(v) else None
 
     def row_with_path(self, own: bytes, tree_id: bytes):
         """The row and its path to D: (row, position among the live rows, T, sibling hashes)."""
         row = self.get(own, tree_id)
         if row is None or row.retired:
             return row, None, 0, []
-        tree, ordered = digest_tree(self.live_rows(own))
-        i = [r.key for r in ordered].index(row.key)
-        return row, i, len(ordered), tree.path(i)
+        tree, at = self._dtrees[own]
+        i = at[row.key]
+        return row, i, tree.n, tree.path(i)
 
     def route(self, obj_id: bytes):
         """What a reader asks a node, in one answer from one view of the table: the live row that covers

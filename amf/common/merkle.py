@@ -4,7 +4,7 @@ A node that covers m > 1 leaves has the first ceil(m/2) of them in its left
 subtree and the rest in its right one.  Consequences the paper relies on:
 
 * the shape depends on n alone and the depth is ceil(log2 n)
-  -> ten rounds of Phase 5 for a tree of N_up = 1000 leaves
+  -> ten rounds of Phase 6 for a tree of N_up = 1000 leaves
 * two trees over the same leaf values in the same order have the same root,
   however each was built, so the owner can compute any root from its catalog
 * if n_b >= 1 and n_a = ceil((n_a + n_b)/2), root(all) = H(r_a || r_b): a split
@@ -94,7 +94,7 @@ class MerkleTree:
         return self._get(k)
 
     def children(self) -> tuple[bytes, bytes]:
-        """Roots of the two halves (the first round of Phase 5)."""
+        """Roots of the two halves (the first round of Phase 6)."""
         if self.n < 2:
             raise ValueError("a tree with fewer than two leaves has no halves")
         return self._get(2), self._get(3)

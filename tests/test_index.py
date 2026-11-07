@@ -1,4 +1,4 @@
-"""Tests for amf/index.py -- the Distributed Index (III-A 4), Table I, Definition 2) and D."""
+"""Tests for amf/index.py -- the Distributed Index (III-A 4), III-B 2) and 3), Table I, Definition 2) and D."""
 import hashlib
 from dataclasses import replace
 
@@ -171,6 +171,58 @@ def test_lookup_follows_a_split_and_a_merge():
     ab = sign_row(SK, replace(make_row(), lo=whole.lo, hi=whole.hi))
     assert n.accept_batch([ab, sign_row(SK, retire(a)), sign_row(SK, retire(b))])
     assert all(n.lookup(i).tree_id == ab.tree_id for i in ids)
+
+
+def test_live_rows_sit_in_one_b_plus_tree_keyed_by_lo():
+    """III-B 2): a split deletes one key and inserts two, a merge the other way round, a migration
+    only replaces the value under its key, and a retired row leaves the tree but stays in the table."""
+    n = node(PK, PK2)
+    k_id = crypto.derive_id_key(bytes(32))
+    whole = sign_row(SK, make_row(tag=1))
+    other = sign_row(SK2, make_row(own=OWN2, tag=1))
+    assert n.accept_batch([whole, other])
+    assert sorted(n._live) == sorted([whole.lo, other.lo]) and len(n._live) == 2
+    p = id_to_int(crypto.make_id(k_id, OWN, 1, "middle"))
+    a = sign_row(SK, replace(make_row(), lo=whole.lo, hi=p))
+    b = sign_row(SK, replace(make_row(), lo=p, hi=whole.hi))
+    assert n.accept_batch([a, b, sign_row(SK, retire(whole))])
+    assert len(n._live) == 3 and n._live.get(p) == b.key and n._live.get(whole.lo) == a.key
+    assert n.get(OWN, whole.tree_id).retired and len(n.rows) == 4
+    moved = sign_row(SK, replace(b, provider="C", version=2))
+    assert n.accept(moved) and len(n._live) == 3 and n._live.get(p) == moved.key
+    ab = sign_row(SK, replace(make_row(), lo=whole.lo, hi=whole.hi))
+    assert n.accept_batch([ab, sign_row(SK, retire(a)), sign_row(SK, retire(moved))])
+    assert len(n._live) == 2 and n._live.get(whole.lo) == ab.key and p not in n._live
+    n._live.check()
+
+
+def test_a_lookup_is_a_predecessor_search_and_then_a_range_check():
+    """Algorithm 1, line 3: the row with the largest lo not above the identifier, which must then
+    lie below that row's hi; an identifier in a gap between two types has a predecessor but no tree."""
+    n = node()
+    k_id = crypto.derive_id_key(bytes(32))
+    one, three = sign_row(SK, make_row(tag=1)), sign_row(SK, make_row(tag=3))
+    assert n.accept_batch([one, three])
+    assert n.lookup(crypto.make_id(k_id, OWN, 1, "x")).tree_id == one.tree_id
+    assert n.lookup(crypto.make_id(k_id, OWN, 2, "x")) is None        # predecessor is tree 1, hi fails
+    assert n.lookup(crypto.make_id(k_id, OWN, 3, "x")).tree_id == three.tree_id
+    assert n.lookup(crypto.make_id(k_id, OWN, 0, "x")) is None        # below every lo
+
+
+def test_the_tree_of_d_is_kept_per_owner_and_rebuilt_only_for_the_owner_that_changed():
+    n = node(PK, PK2)
+    mine = [sign_row(SK, make_row(tag=t)) for t in (1, 2, 3)]
+    theirs = sign_row(SK2, make_row(own=OWN2, tag=1))
+    assert n.accept_batch(mine, signed_digest(SK, mine, 1)) and n.accept(theirs)
+    before = n._dtrees[OWN]
+    assert n.accept(sign_row(SK2, replace(theirs, provider="B", version=2)))
+    assert n._dtrees[OWN] is before                                   # another owner's change: untouched
+    d = n.digest(OWN)
+    for r in mine:
+        got, i, T, path = n.row_with_path(OWN, r.tree_id)
+        assert T == 3 and verify_row_in_digest(d, got, i, path)
+    assert n.accept(sign_row(SK, replace(mine[0], provider="C", version=2)))
+    assert n._dtrees[OWN] is not before                               # this owner's change: rebuilt
 
 
 def test_many_owners_keep_their_rows_apart():

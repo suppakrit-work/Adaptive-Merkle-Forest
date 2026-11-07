@@ -1,11 +1,11 @@
-"""The Auditor and the data user -- Section III-A 2), Phase 3.
+"""The Auditor and the data user -- Section III-A 2), Phase 5 (Algorithm 4) and Phase 3 (Algorithm 1).
 
 An auditor checks integrity on the owner's behalf and holds no secret key.  It
 challenges a provider for the identifier, ciphertext and path at positions of
 its choosing, hashes the ciphertext itself, and checks it against the leaf
 value returned and that value's path against the signed root.  A ciphertext
 that fails names the provider and the position; a path that fails hands the
-tree to Phase 5.  What an audit covers is set by the question: one object or a
+tree to Phase 6.  What an audit covers is set by the question: one object or a
 set of them (only the trees whose ranges cover them), one owner (its live rows
 from the DHT nodes and its current D from the owner, checking that none is
 missing, then a sample of positions in each tree), or the whole forest.
@@ -41,7 +41,7 @@ class AuditReport:
 
     @property
     def tree_level(self) -> bool:
-        """A failing path says the tree's stored hashes are wrong: Phase 5 takes over."""
+        """A failing path says the tree's stored hashes are wrong: Phase 6 takes over."""
         return bool(self.bad_path)
 
 
@@ -75,12 +75,16 @@ def check_answer(row, i, obj_id, ct, stored, path) -> str:
     return "path"
 
 
-def _covers(row, v: int) -> bool:
+def _covers(row, v) -> bool:
     """row.covers(v) for a row from a node, which may not even be well formed."""
     try:
         return row.covers(v)
     except TypeError:
         return False
+
+
+def _as_int(obj_id):
+    return int.from_bytes(obj_id, "big") if isinstance(obj_id, bytes) else None
 
 
 class Auditor:
@@ -107,13 +111,13 @@ class Auditor:
         answers = {}
         for a in prov.challenge(row.own, row.tree_id, positions):
             answers.setdefault(a[0], a)
-        for i in positions:                               # an answer for every position asked, at that position
-            if i not in answers:
+        for i in positions:                               # Algorithm 4, lines 13-16
+            if i not in answers or answers[i][2] is None:  # no answer, or no ciphertext: missing
                 rep.missing.append(i)
                 continue
             _i, obj_id, ct, stored, path = answers[i]
-            verdict = check_answer(row, i, obj_id, ct, stored, path) if row.covers(int.from_bytes(obj_id, "big")) \
-                else "path"
+            verdict = check_answer(row, i, obj_id, ct, stored, path) if _covers(row, _as_int(obj_id)) \
+                else "path"                                # an identifier outside the range: bad path
             {"ok": rep.checked, "ciphertext": rep.bad_ciphertext, "path": rep.bad_path,
              "missing": rep.missing}[verdict].append(i)
         return rep

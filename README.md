@@ -10,10 +10,10 @@ The code under `amf/` has one folder per party of the system model (Fig. 1).
 
 | Folder | Files | In the paper |
 |---|---|---|
-| `amf/common/` | `crypto` identifiers, encryption, leaf hash; `merkle` canonical-shape tree; `index` index rows, DHT node, forest digest D; `orders` signed orders; `wire` the JSON format used on the network | Phase 2, Definitions 1–2, Lemma 1, Table I |
-| `amf/owner/` | `owner` Key/Signing and Verification Manager (Algorithm 1); `catalog` the owner's books; `policy` Policy Manager; `localize` fault localization (Algorithm 2) | III-A 1, Phases 2–5 |
+| `amf/common/` | `crypto` identifiers, encryption, leaf hash; `merkle` canonical-shape tree; `bptree` the B+ tree with counts; `index` index rows, DHT node (B+ tree on lo), forest digest D; `orders` signed orders; `wire` the JSON format used on the network | Phase 2, III-B, Definitions 1–2, Lemma 1, Table I |
+| `amf/owner/` | `owner` Key/Signing and Verification Manager (Algorithm 3); `catalog` the owner's books (B+ tree on id); `policy` Policy Manager (Algorithm 2); `localize` fault localization (Algorithm 5) | III-A 1, Phases 2–4 and 6 |
 | `amf/provider/` | `service` Storage Service (Proof Engine, Shadow Area, Migrate Pipe, DHT node); `store` objects on disk; `server` the service over HTTP; `client` a provider seen over HTTP | III-A 3 |
-| `amf/auditor/` | `auditor` the auditor and the data user | III-A 2, Phase 3 |
+| `amf/auditor/` | `auditor` the auditor and the data user (Algorithms 1 and 4) | III-A 2, Phases 3 and 5 |
 | `tests/` | one test file per module | |
 
 ## Setup

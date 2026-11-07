@@ -1,4 +1,4 @@
-"""Fault Localization -- Phase 5 and Algorithm 2.
+"""Fault Localization -- Phase 6 and Algorithm 5.
 
 A fault surfaces in three ways: a read or a challenge whose ciphertext does not
 hash to the leaf value the provider returns names its own position; a path
@@ -9,7 +9,7 @@ leaf hashes of the whole tree.  Both are the provider's own report: they find
 damage a semi-honest provider does not know about, but a malicious one can
 answer them from its stored hashes.
 
-Algorithm 2: if the stored root is not r, stop at the tree; if r' = r, clean;
+Algorithm 5: if the stored root is not r, stop at the tree; if r' = r, clean;
 otherwise walk down, round by round, asking for the two children of each node
 as a stored value st and a recomputed value rec.  Stored pairs must hash to the
 parent already verified, else the stored hashes are damaged; wherever st != rec
@@ -54,7 +54,7 @@ class _Lie(Exception):
 
 
 class _Damaged(Exception):
-    """Stored values that do not hash up to the signed root (Algorithm 2, line 8)."""
+    """Stored values that do not hash up to the signed root (Algorithm 5, line 8)."""
 
 
 class Localizer:
@@ -99,7 +99,7 @@ class Localizer:
             rep.verdict, rep.note = "no-answer", f"{type(e).__name__}: {e}"
             return rep
         rep.positions = sorted(found)
-        for i in rep.positions:                                  # Algorithm 2, lines 14-17
+        for i in rep.positions:                                  # Algorithm 5, lines 14-17
             obj_id, name = self.name_at(row, i)
             try:
                 _tid, _v, _i, _stored, ct, path = prov.read(obj_id)
@@ -117,7 +117,7 @@ class Localizer:
         return rep
 
     def _rounds(self, prov, row, rep) -> list:
-        """The round-by-round form: the owner chooses each step (Algorithm 2, lines 4-13), and asks for
+        """The round-by-round form: the owner chooses each step (Algorithm 5, lines 4-13), and asks for
         all the nodes of a round in one exchange."""
         todo, found = [(1, 0, row.count, row.root)], []
         while todo:
@@ -180,7 +180,7 @@ class Localizer:
             return list(range(row.count))
         return [i for i, (a, b) in enumerate(zip(leaves, own)) if a != b]
 
-    # -- the whole forest at once (III-C, Parallelism) --------------------------------------
+    # -- the whole forest at once (III-D, Parallelism) --------------------------------------
 
     def _each(self, fn, items) -> list:
         if not self.owner.parallel or len(items) < 2:

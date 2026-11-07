@@ -1,4 +1,4 @@
-"""Object Commitment -- Phase 2 of Section III-C.
+"""Object Commitment -- Phase 2 of Section III-D.
 
     id   = tag || HMAC(K_id, name)      tag = owner's tag || type tag
     k    = HKDF(MK, id)

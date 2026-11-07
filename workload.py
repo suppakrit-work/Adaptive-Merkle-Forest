@@ -9,7 +9,7 @@ driven by the same sequence of accesses under two configurations:
 
 and, for reference, one tree over all N objects, computed rather than run
 (every access lands in that one tree, so its costs follow from N alone):
-with the owner's check of Algorithm 1 (n - 1 hashes, the provider rebuilds
+with the owner's check of Algorithm 3 (n - 1 hashes, the provider rebuilds
 all n leaves), and with a path update as in Wang et al. (2 log2 N hashes at
 the verifier, log2 N at the provider).
 
@@ -126,7 +126,7 @@ def single_tree(n, seq, wang):
     d = depth_of(n)
     if wang:                                              # verify the old path, compute the new root
         owner, prov = writes * 2 * d, writes * d
-    else:                                                 # Algorithm 1 on one tree of n leaves
+    else:                                                 # Algorithm 3 on one tree of n leaves
         owner, prov = writes * (n - 1), writes * n
     return dict(owner_hashes=owner, provider_leaves=prov, read_path=reads * d, reads=reads, writes=writes,
                 owner_ms=None, provider_ms=None, splits=0, merges=0, trees=1, mean_tree=n)
@@ -148,7 +148,7 @@ def main():
     for wl, (a, writes) in WORKLOADS.items():
         seq = accesses(args.n, a, writes, args.accesses, args.seed)
         res = {"never restructures": run("static", args, seq), "AMF": run("AMF", args, seq),
-               "one tree, Algorithm 1": single_tree(args.n, seq, wang=False),
+               "one tree, Algorithm 3": single_tree(args.n, seq, wang=False),
                "one tree, path update": single_tree(args.n, seq, wang=True)}
         show(wl, args, res)
         summary.append((wl, res["never restructures"], res["AMF"]))

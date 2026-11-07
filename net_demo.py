@@ -144,9 +144,9 @@ def main():
             owner.read(name)
         except ReadFault as e:
             print(f"    fault injected at B: read of {name} -> {e.kind} at position {e.position}")
-        rep = m.run("Phase 5: localize (rounds)", lambda: Localizer(owner).localize(video.tree_id))
+        rep = m.run("Phase 6: localize (rounds)", lambda: Localizer(owner).localize(video.tree_id))
         print(f"    verdict {rep.verdict}: {rep.names} after {rep.rounds} rounds")
-        m.run("Phase 5: localize (one exchange)", lambda: Localizer(owner).localize(video.tree_id, True))
+        m.run("Phase 6: localize (one exchange)", lambda: Localizer(owner).localize(video.tree_id, True))
         moved = m.run("evacuate B (repair, then migrate)",
                       lambda: owner.evacuate("B", repairs={name: (b"repaired copy", "video")}))
         for row in moved:

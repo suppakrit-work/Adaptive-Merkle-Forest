@@ -1,4 +1,5 @@
-"""The Policy Manager -- Phase 4, the rules of split and merge.
+"""The Policy Manager -- Phase 4 and Algorithm 2: the rules of split and merge, a policy round,
+and the response to a failed check.
 
 Let R_L and R_R be the accesses, reads and writes, a tree has seen on its first
 ceil(n/2) leaves and on the rest, R_a and R_b those of two adjacent trees, and
@@ -16,7 +17,8 @@ ever taken past N_up.  A migration is not driven by the counts (owner.evacuate).
 A hysteresis rule keeps N_low well under half of N_up (here: at most a quarter,
 which Table II's 250 and 1000 meet exactly) and forbids touching the same tree
 twice within Delta_min policy rounds.  A migration is ordered here too, but
-only after a failed check of Phase 3 or Phase 5 (failed_check).
+only after a failed check of Phase 3, 5 or 6 (failed_check, the FailedCheck of Algorithm 2)
+and tick is its Round.
 
 Reads come from the providers' reports, per half of each tree, the owner's
 included; a provider is believed only about trees it holds, and only for

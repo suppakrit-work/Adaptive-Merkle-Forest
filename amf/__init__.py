@@ -1,12 +1,13 @@
 """Adaptive Merkle Forest -- the prototype of the paper, one folder per party of Fig. 1.
 
     common/    what every party uses: crypto (Phase 2), merkle (Definition 1,
-               Lemma 1), index (Table I, Definition 2, the forest digest D),
-               orders (signed orders of Phase 4), wire (the network format)
+               Lemma 1), bptree (the B+ tree of III-B), index (Table I,
+               Definition 2, the DHT node, the forest digest D), orders
+               (signed orders of Phase 4), wire (the network format)
     owner/     the Data Owner's three managers, all on the owner's machine:
-               owner (Key/Signing and Verification Manager, Algorithm 1),
+               owner (Key/Signing and Verification Manager, Algorithm 3),
                catalog (the Verification Manager's books), policy (Policy
-               Manager, Phase 4), localize (Phase 5, Algorithm 2)
+               Manager, Phase 4, Algorithm 2), localize (Phase 6, Algorithm 5)
     provider/  every provider's Storage Service: service (Proof Engine, Shadow
                Area, Migrate Pipe, DHT node), store (objects on disk), server
                (the service over HTTP), client (a provider seen over HTTP)

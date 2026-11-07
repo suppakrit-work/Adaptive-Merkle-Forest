@@ -104,7 +104,7 @@ def test_other_types_and_owners_do_not_leak_into_a_range():
     assert cat.count(*rng(2)) == 2 and cat.count(*rng(5)) == 0
 
 
-# ---- positions: the chain position -> identifier -> name (Phase 5) --------------
+# ---- positions: the chain position -> identifier -> name (Phase 6) --------------
 
 def test_position_and_id_at_are_inverse():
     cat = filled(["f%d" % i for i in range(50)])
@@ -136,7 +136,7 @@ def test_an_upload_moves_later_positions_by_one():
     assert cat.ids_in(lo, hi) == before
 
 
-def test_treap_agrees_with_a_sorted_list_under_random_updates():
+def test_b_plus_tree_agrees_with_a_sorted_list_under_random_updates():
     rnd = random.Random(11)
     cat, oracle = Catalog(), {}
     lo, hi = rng()

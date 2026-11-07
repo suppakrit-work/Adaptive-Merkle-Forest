@@ -326,7 +326,7 @@ class Provider:
         t = self.live[(own, tree_id)]
         return [(i, t.ids[i], self.objects.get(t.ids[i]), t.leaves[i], t.tree.path(i)) for i in positions]
 
-    # -- what fault localization asks for (Phase 5) --------------------------------
+    # -- what fault localization asks for (Phase 6) --------------------------------
 
     def recomputed_leaves(self, own: bytes, tree_id: bytes) -> list:
         t = self.live[(own, tree_id)]
@@ -345,7 +345,7 @@ class Provider:
         return self.live[(own, tree_id)].root
 
     def recount(self, own: bytes) -> dict:
-        """The question that opens Phase 5, for all of this owner's trees here in one answer:
+        """The question that opens Phase 6, for all of this owner's trees here in one answer:
         tid -> (stored root, r')."""
         out = {}
         for tid in self.dht.tree_ids(own):
