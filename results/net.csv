@@ -1,25 +1,25 @@
-step,runs,median_ms,owner_cpu_ms,wait_ms,calls,sent_bytes,received_bytes
-"Phase 1: register, open 3 trees",1,42.03,0.0,42.03,24,10899,507
-"Phase 2: batch write, 50 objects",1,275.94,15.62,260.31,24,128982,1593
-"Phase 2: batch write, 50 objects",1,276.38,31.25,245.13,24,129114,1593
-"Phase 2: batch write, 50 objects",1,264.07,15.62,248.44,24,129273,1593
-"Phase 2: batch write, 50 objects",1,312.01,15.62,296.39,24,129261,1593
-"Phase 2: batch write, 50 objects",1,274.68,15.62,259.06,24,129273,1593
-"Phase 2: batch write, 50 objects",1,293.15,0.0,293.15,24,129282,1596
-Phase 2: upload one object,20,15.13,0.0,15.13,8,5556,532
-Phase 3: owner reads one object,20,2.44,0.0,2.44,1,108,1907
-"Phase 3: data user reads, with D",20,9.63,0.0,9.63,4,432,4904
-"Phase 5: audit of the owner, s = 8",1,40.94,15.62,25.31,15,1445,53111
-"Phase 3: 200 reads, Zipf 1",1,464.14,203.12,261.01,200,21600,379772
-Phase 4: policy round 1,1,6.9,0.0,6.9,3,192,399
-Phase 4: policy round 2,1,9.25,0.0,9.25,3,192,39
-Phase 4: policy round 3,1,8.74,0.0,8.74,3,192,39
-Phase 4: split at the median,1,10.12,0.0,10.12,4,7254,889
-Phase 4: merge the halves back,1,9.35,9.35,0,4,7094,474
-Phase 4: migrate A -> B (pipe),1,510.73,0.0,510.73,5,3258,16150
-Phase 4: release the copy at A,1,17.68,0.0,17.68,1,336,14
-Phase 6: localize (rounds),1,27.72,0.0,27.72,9,1008,3572
-Phase 6: localize (one exchange),1,13.77,0.0,13.77,4,402,2385
-Phase 6: recount of the whole forest,1,13.6,13.6,0,3,192,510
-"Phase 4: failed check -> repair, migrate",1,562.97,15.62,547.34,13,7474,16521
-recovery from the providers,1,139.74,78.12,61.62,27,2340,292947
+step,runs,median_ms,owner_ms,wait_ms,calls,sent_bytes,received_bytes
+"Phase 1: register, open 3 trees",1,50.7,3.08,47.62,24,10899,507
+"Phase 2: batch write, 50 objects",1,266.12,7.87,258.25,24,128982,1593
+"Phase 2: batch write, 50 objects",1,291.33,5.77,285.57,24,129114,1593
+"Phase 2: batch write, 50 objects",1,281.93,7.6,274.33,24,129273,1593
+"Phase 2: batch write, 50 objects",1,286.77,6.87,279.9,24,129261,1593
+"Phase 2: batch write, 50 objects",1,295.29,6.33,288.97,24,129273,1593
+"Phase 2: batch write, 50 objects",1,263.48,7.63,255.85,24,129282,1596
+Phase 2: upload one object,20,16.89,1.06,15.82,8,5556,532
+Phase 3: owner reads one object,20,2.49,0.29,2.2,1,108,1907
+"Phase 3: data user reads, with D",20,10.42,1.49,8.93,4,432,4904
+"Phase 5: audit of the owner, s = 8",1,45.55,4.93,40.62,15,1443,52893
+"Phase 3: 200 reads, Zipf 1",1,556.03,64.64,491.39,200,21600,379449
+Phase 4: policy round 1,1,6.38,0.38,6.01,3,192,399
+Phase 4: policy round 2,1,6.44,0.3,6.14,3,192,39
+Phase 4: policy round 3,1,7.55,0.41,7.14,3,192,39
+Phase 4: split at the median,1,8.21,0.79,7.41,4,7254,889
+Phase 4: merge the halves back,1,8.44,0.73,7.71,4,7094,474
+Phase 4: migrate A -> B (pipe),1,822.25,1.48,820.78,5,3258,16150
+Phase 4: release the copy at A,1,13.03,0.24,12.79,1,336,14
+Phase 6: localize (rounds),1,23.48,1.26,22.23,9,1008,3572
+Phase 6: localize (one exchange),1,11.9,0.62,11.28,4,402,2385
+Phase 6: recount of the whole forest,1,10.11,0.1,10.01,3,192,510
+"Phase 4: failed check -> repair, migrate",1,588.08,2.33,585.75,13,7474,16521
+recovery from the providers,1,99.63,29.66,69.97,27,2340,292950

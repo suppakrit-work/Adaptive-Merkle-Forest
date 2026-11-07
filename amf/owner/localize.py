@@ -28,7 +28,7 @@ side when the owner runs in parallel.
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from amf.common import crypto
+from amf.common import crypto, waits
 from amf.common.merkle import left_size, node_hash, verify_path
 
 READ_HEADER = 16 + 8 + 8 + 32                     # tid, version, position, stored leaf of a read answer
@@ -185,7 +185,7 @@ class Localizer:
     def _each(self, fn, items) -> list:
         if not self.owner.parallel or len(items) < 2:
             return [fn(x) for x in items]
-        with ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
+        with waits.waiting(), ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
             return list(pool.map(fn, items))
 
     def recount_forest(self) -> dict:

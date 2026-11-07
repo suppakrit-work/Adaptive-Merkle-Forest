@@ -24,7 +24,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from amf.common import crypto
+from amf.common import crypto, waits
 from amf.owner.catalog import TYPES_KEY, Catalog, seal_entry, seal_tombstone, seal_types
 from amf.common.index import (ForestDigest, IndexRow, digest_tree, freshest_signed, generate_signing_key,
                        id_to_int, new_tree_id, retire, row_leaf, sign_digest, sign_row, tag_range,
@@ -134,8 +134,9 @@ class Owner:
             return
         if self._pool is None:
             self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="amf-owner")
-        for f in [self._pool.submit(send, p) for p in provs]:
-            f.result()
+        with waits.waiting():
+            for f in [self._pool.submit(send, p) for p in provs]:
+                f.result()
 
     def _seal(self, slot: bytes, version: int) -> bytes:
         if slot == TYPES_KEY:

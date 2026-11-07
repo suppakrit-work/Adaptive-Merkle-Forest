@@ -30,6 +30,8 @@ Parameters (Table II): N_up 1000, N_low 250, gamma 4, mu 50, Delta_min 3.
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from amf.common import waits
+
 
 @dataclass
 class Decision:
@@ -134,7 +136,7 @@ class PolicyManager:
         self.collect_reads()
         decisions = self.decide()
         if self.owner.parallel and len(decisions) > 1:       # the trees of one round are disjoint
-            with ThreadPoolExecutor(max_workers=min(8, len(decisions))) as pool:
+            with waits.waiting(), ThreadPoolExecutor(max_workers=min(8, len(decisions))) as pool:
                 outcomes = list(pool.map(self._carry_out, decisions))
         else:
             outcomes = [self._carry_out(d) for d in decisions]

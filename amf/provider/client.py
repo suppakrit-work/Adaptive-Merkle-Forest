@@ -18,7 +18,7 @@ import threading
 import time
 import urllib.parse
 
-from amf.common import wire
+from amf.common import waits, wire
 
 ERRORS = {e.__name__: e for e in (PermissionError, ValueError, KeyError, IndexError, RuntimeError,
                                   TimeoutError)}
@@ -39,7 +39,6 @@ class Connection:
         self.lock = threading.Lock()
         self.conn = None
         self.calls = self.sent = self.received = 0
-        self.seconds = 0.0                       # time spent waiting on the wire, for the owner-side figure
 
     def request(self, method: str, path: str, body: bytes = b"") -> bytes:
         with self.lock:
@@ -64,7 +63,7 @@ class Connection:
             self.calls += 1
             self.sent += len(body)
             self.received += len(data)
-            self.seconds += time.perf_counter() - t0
+            waits.note(time.perf_counter() - t0)
             if resp.status != 200:
                 raise RemoteError(f"HTTP {resp.status} for {path}: {data[:200]!r}")
             return data

@@ -8,9 +8,9 @@ Start the providers first (docker compose up, or python -m amf.provider.server .
 
 The owner runs here; each provider is reached over HTTP.  Every step is timed
 and the bytes and round trips it took are counted at the owner's end, and the
-wall time is split into the owner's own CPU time (checks, signatures, the
-wire format) and the time spent waiting on the providers, so the same script
-measures a run on localhost or across three clouds.  Objects go up as batch
+wall time is split into the time the owner waited on the providers and what
+is left, its own work (checks, signatures, the wire format), so the same
+script measures a run on localhost or across three clouds.  Objects go up as batch
 writes of --batch objects per tree (one announcement, one check, Algorithm 3
 line 12), then single writes and reads are timed on their own.  Reads follow
 a Zipf law over the objects (--zipf 0 for uniform); --locality F sends nine
@@ -30,6 +30,7 @@ import statistics
 import time
 
 from amf.auditor import Auditor, Reader
+from amf.common import waits
 from amf.common.index import id_to_int, tag_range
 from amf.owner.localize import Localizer
 from amf.owner import Owner, ReadFault
@@ -50,21 +51,21 @@ class Meter:
         return [sum(getattr(p.net, k) for p in self.provs) for k in ("calls", "sent", "received")]
 
     def run(self, step, fn, repeat=1):
-        times, cpus, out = [], [], None
+        times, waited, out = [], [], None
         for k in range(repeat):
-            c0 = self.counters()
-            t0, p0 = time.perf_counter(), time.process_time()
+            c0, w0 = self.counters(), waits.waited
+            t0 = time.perf_counter()
             out = fn()
             times.append(1000 * (time.perf_counter() - t0))
-            cpus.append(1000 * (time.process_time() - p0))
+            waited.append(1000 * (waits.waited - w0))
             if k == 0:
                 first = [b - a for a, b in zip(c0, self.counters())]
-        wall, cpu = statistics.median(times), statistics.median(cpus)
-        row = {"step": step, "runs": repeat, "median_ms": round(wall, 2), "owner_cpu_ms": round(min(cpu, wall), 2),
-               "wait_ms": round(max(wall - cpu, 0), 2), "calls": first[0], "sent_bytes": first[1],
+        wall, wait = statistics.median(times), statistics.median(waited)
+        row = {"step": step, "runs": repeat, "median_ms": round(wall, 2), "owner_ms": round(max(wall - wait, 0), 2),
+               "wait_ms": round(min(wait, wall), 2), "calls": first[0], "sent_bytes": first[1],
                "received_bytes": first[2]}
         self.rows.append(row)
-        print(f"  {step:38} {row['median_ms']:>9.2f} ms  cpu {row['owner_cpu_ms']:>8.2f}  wait {row['wait_ms']:>8.2f}"
+        print(f"  {step:38} {row['median_ms']:>9.2f} ms  owner {row['owner_ms']:>8.2f}  wait {row['wait_ms']:>8.2f}"
               f"  {row['calls']:>5} calls {row['sent_bytes']:>9,} B out {row['received_bytes']:>9,} B in")
         return out
 
