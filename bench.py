@@ -1,7 +1,8 @@
 """AMF prototype -- cost of each operation, and the baselines of Section V (run: python bench.py).
 
-For forests of N objects (one owner, three providers, three types, trees of
-about 3/4 N_up leaves, as the size test leaves them) it measures, for a read,
+For forests of N objects (one owner, three providers, three types; each
+type's objects cut into the fewest trees of at most 3/4 N_up leaves, so 333
+per tree at N = 1,000 and about 714 at 10^4 and 10^5) it measures, for a read,
 an upload, a split, a merge, a migration, an audit and a localization:
 
   owner ms     wall time minus the time spent inside provider calls
@@ -20,6 +21,12 @@ and the same for the baselines:
   fetch-all    localization by fetching every leaf hash of the tree
   re-challenge localization by challenging halves (Zhu et al., CPDP): rounds
                and blocks the provider must touch, counted, not timed
+
+Timed here: every AMF operation (owner and provider sides) and the rebuild
+baseline.  Counted, not timed: the single-tree read path and localization
+depth, fetch-all bytes, and the re-challenge rounds and blocks, which follow
+from N alone.  The merge timed here joins two neighbors as they are, whatever
+their sizes; Table II's rule would only merge two that sum to under N_low.
 
 The forest is built in bulk (the owner computes every root from its catalog,
 signs the rows, the providers promote the trees); the encrypted catalog copy
@@ -189,7 +196,7 @@ def bench_amf(w, reps, s):
     out.update(read_owner_ms=med(t_own), read_user_ms=med(t_user),
                read_proof_bytes=med(path_b), read_user_proof_bytes=med(user_b))
 
-    # upload of a new object into a tree of about 3/4 N_up
+    # upload of a new object into a tree of at most 3/4 N_up
     om_, pm_, hs, dh = [], [], [], []
     for k in range(reps):
         t = w.rnd.choice(w.types)

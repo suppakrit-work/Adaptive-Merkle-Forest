@@ -118,10 +118,10 @@ class PolicyManager:
         self._touch(*(r.tree_id for r in moved))
         return moved
 
-    def before_write(self, row, obj_id: bytes):
-        """The size test on the count a write would produce: split first if it would pass N_up.
-        Returns the row that covers obj_id afterwards."""
-        if row.count + 1 > self.upper and row.count >= 2:
+    def before_write(self, row, obj_id: bytes, k: int = 1):
+        """The size test on the count a write (of k new objects) would produce: split first if it
+        would pass N_up.  Returns the row that covers obj_id afterwards."""
+        if row.count + k > self.upper and row.count >= 2:
             a, b, _ = self.owner.split(row.tree_id)
             self._after_split(row.tree_id, a, b)
             return self.owner.row_for(obj_id)

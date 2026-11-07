@@ -1,0 +1,33 @@
+section,fault,check,caught,named,cost,note
+IV-B,ciphertext altered at B,owner read (Alg 1),yes,B tree 8e4a14 pos 8 = video-10,,
+IV-B,ciphertext altered at B,data user read (Alg 1),yes,B pos 8,,
+IV-B,ciphertext altered at B,"audit, all positions (Alg 4)",yes,B pos [8],,
+IV-B,object lost at C,owner read (Alg 1),yes,C pos 8 = document-38,,
+IV-B,object lost at C,"audit, all positions (Alg 4)",yes,C pos [8],,
+IV-B,object lost at C,recount + walk (Alg 5),yes,['document-38'] after 4 rounds,"5 hashes, 768 B",
+IV-B,stored hash rewritten at A,owner read (Alg 1),yes,"A tree b0ab64 pos 1, kind path",,
+IV-B,stored hash rewritten at A,walk (Alg 5),yes,tree b0ab64: stored-hashes-damaged,,
+IV-B,one node rolled back to an old row,"data user read, current D",yes,"the row that reaches D, from another node",,
+IV-B,"one node rolled back, reader with an old D",data user read (Alg 1 line 6),yes,"the newer D signed by the owner, from an honest node",,
+IV-B,every node and the provider rolled back together,"data user read, current D",yes,no row reaches the current D,,
+IV-B,"the same, reader never back at the owner","data user read, old D",NO,"not caught, by design (III-B 3): fresh as one honest node",,the reader holds the old D the rolled-back nodes agree with
+IV-B,one row withheld by every node,audit of the owner (Alg 4),yes,rows recompute to D: False,,
+IV-C,wrong root announced on a write,Alg 3 line 12,yes,refused; index and D unchanged; Shadow Area empty,,
+IV-C,median split with a leaf swapped across halves,Alg 3 line 6 (one hash),yes,H(r_a || r_b) != r; refused,361 hash,
+IV-C,split elsewhere with a leaf swapped,Alg 3 line 12 (recompute),yes,root over the catalog differs; refused,2 hashes,
+IV-C,merge with one leaf dropped,Alg 3 line 3 (count),yes,count differs; refused,,
+IV-C,destination missing delta = 0.125 of a 16-leaf tree,"migration challenge, s = 8",yes,escaped 40/200 = 0.200; exact 0.233; bound (1-delta)^s = 0.344,8 ciphertexts + paths,
+IV-C,destination missing delta = 0.25 of a 16-leaf tree,"migration challenge, s = 8",yes,escaped 12/200 = 0.060; exact 0.038; bound (1-delta)^s = 0.100,8 ciphertexts + paths,
+IV-C,destination missing delta = 0.5 of a 16-leaf tree,"migration challenge, s = 8",yes,escaped 0/200 = 0.000; exact 0.000; bound (1-delta)^s = 0.004,8 ciphertexts + paths,
+IV-D,row forged by another key under the victim's tid,"DHT node, Theorem 1(a)",yes,refused by every node,,
+IV-D,another owner's row over the victim's range,"DHT node, range in own space",yes,refused by every node,,
+IV-D,destination B announces the right root but holds nothing,"challenge fails, next provider tried",yes,tree now at C; A still recomputes r,,FailedCheck of Alg 2
+IV-E,two objects damaged at A (semi-honest),walk (Alg 5),yes,"['image-66', 'image-48']","5 rounds, 11 hashes, 1800 B, 2 objects",
+IV-E,two objects damaged at A (semi-honest),one exchange (Alg 5 variant),yes,"['image-66', 'image-48']","1 round, 12 hashes, 1048 B",
+IV-E,malicious A: false stored value in round 2,walk (Alg 5 line 8),yes,stored-hashes-damaged in round 2,,
+IV-E,malicious A: refuses to answer the walk,walk (Alg 5),yes,charged at the tree: no-answer,,
+IV-E,malicious A: reports the damaged tree as clean,walk (Alg 5),NO,"walk says clean: not caught, by design (IV-E)",,a false rec cannot be seen without the object
+IV-E,malicious A: reports the damaged tree as clean,owner read (Alg 1),yes,read names A pos 16 = image-33,,
+IV-F,every provider reports 10^6 reads on one half (trees < 2 N_low),"policy (Alg 2), floor 2 N_low",yes,0 splits in 9 rounds; forest intact: True,,
+IV-F,the same lie on a 600-leaf tree,"policy (Alg 2), hysteresis Delta_min = 3",yes,1 split(s) in 9 rounds (at most one per Delta_min); forest intact: True,,each split still checked by Alg 3
+IV-F,auditor raises a false alarm on B,owner rechecks with a read,yes,object intact; no migration ordered,,

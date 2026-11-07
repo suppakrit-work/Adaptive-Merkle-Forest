@@ -1,6 +1,6 @@
 """AMF prototype -- does adapting pay?  One workload, two forests and one tree (run: python workload.py).
 
-The same forest of N objects (trees of about 3/4 N_up, as in bench.py) is
+The same forest of N objects (trees of at most 3/4 N_up, as in bench.py) is
 driven by the same sequence of accesses under two configurations:
 
   static   a forest with the same size bounds that never restructures

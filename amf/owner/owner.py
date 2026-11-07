@@ -183,6 +183,12 @@ class Owner:
             return leaves[:j] + [leaf] + leaves[j + 1:]
         return leaves[:j] + [leaf] + leaves[j:]
 
+    def _expected_leaves_many(self, row: IndexRow, pending: dict) -> list:
+        """The same with several pending (id -> leaf) in place: a batch write."""
+        merged = dict(zip(self.catalog.ids_in(row.lo, row.hi), self.catalog.leaves_in(row.lo, row.hi)))
+        merged.update(pending)
+        return [merged[i] for i in sorted(merged)]
+
     def _check_root(self, announced_root: bytes, leaves: list) -> None:
         """Algorithm 3, line 12: the root over the catalog's leaf values, n - 1 hashes."""
         self.hashes += max(len(leaves) - 1, 0)
@@ -222,6 +228,69 @@ class Owner:
             self.unacked.pop(obj_id, None)
         self._count_write(new, obj_id)
         return new
+
+    def upload_many(self, files) -> list:
+        """Phase 2 for many files at once: the objects bound for one tree go to the provider as one
+        batch write, checked with all the pending leaves in place (Algorithm 3, line 12).  A tree is
+        never taken past N_up: when a batch would, the tree is filled, split at its median, and the
+        rest goes on into the halves.  Returns the rows signed, in order."""
+        prepared = {}
+        for name, data, file_type in files:
+            obj_id, ct, leaf = self.prepare(name, data, file_type)
+            held = self.catalog.get(name)
+            if held is not None and held[0] != obj_id:
+                raise ValueError("that name belongs to another type")
+            if obj_id in prepared:
+                raise ValueError(f"{name} twice in one batch")
+            prepared[obj_id] = (name, ct, leaf)
+        todo, signed = sorted(prepared), []
+        while todo:
+            row = self.row_for(todo[0])
+            k = 0
+            while k < len(todo) and row.covers(id_to_int(todo[k])):
+                k += 1
+            room = len(todo) if self.policy is None else max(0, self.policy.upper - row.count)
+            new_here = sum(self.catalog.name_of(i) is None for i in todo[:k])
+            if room < new_here and row.count >= 2:            # the tree would pass N_up: split it first
+                self.policy.before_write(row, todo[0], k=new_here)
+                continue
+            chunk, fresh = [], 0                              # else fill the tree up to N_up and go on
+            for i in todo[:k]:
+                fresh += self.catalog.name_of(i) is None
+                if fresh > room:
+                    break
+                chunk.append(i)
+            k = len(chunk)
+            prov = self.providers[row.provider]
+            batch = [(i, prepared[i][1]) for i in chunk]
+            for i, ct in batch:
+                self.unacked[i] = ct
+            announced = prov.write_many(batch)
+            try:
+                tid, lo, hi, root, n = announced
+                if tid != row.tree_id or (lo, hi) != (row.lo, row.hi):
+                    raise VerificationError("the provider announced another tree or range")
+                expected = self._expected_leaves_many(row, {i: prepared[i][2] for i in chunk})
+                if n != len(expected):
+                    raise VerificationError(f"count {n}, the owner's books say {len(expected)}")
+                self._check_root(root, expected)
+            except Exception:
+                prov.discard_pending(self.own, row.tree_id)
+                for i in chunk:
+                    self.unacked.pop(i, None)
+                raise
+            for i in chunk:
+                self.catalog.put(prepared[i][0], i, prepared[i][2])
+            new = self._publish([replace(row, root=root, count=n, version=row.version + 1)],
+                                {i: None for i in chunk})[0]
+            if prov.acknowledged(self.own, new.tree_id, new.root):
+                for i in chunk:
+                    self.unacked.pop(i, None)
+            for i in chunk:
+                self._count_write(new, i)
+            signed.append(new)
+            todo = todo[k:]
+        return signed
 
     def delete(self, name: str) -> IndexRow:
         obj_id, _leaf = self.catalog.get(name)

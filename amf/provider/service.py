@@ -189,6 +189,25 @@ class Provider:
         self.shadow[t.key] = Pending(new, "write", staged={obj_id: ct})
         return new.announce()
 
+    def write_many(self, items):
+        """Several objects bound for one tree, written as one batch: stored, built into one pending
+        tree, announced once; the owner checks it with all the pending leaves in place."""
+        items = list(items)
+        if not items:
+            raise ValueError("nothing to write")
+        t = self.tree_for(items[0][0])
+        if t.key in self.shadow:
+            raise RuntimeError("an operation is already pending on this tree")
+        merged = dict(zip(t.ids, t.leaves))
+        for obj_id, ct in items:
+            if not (t.lo <= int.from_bytes(obj_id, "big") < t.hi):
+                raise ValueError("an object of the batch belongs to another tree")
+            merged[obj_id] = crypto.leaf_hash(obj_id, ct)
+        ids = sorted(merged)
+        new = TreeState.build(t.own, t.tree_id, t.lo, t.hi, ids, [merged[i] for i in ids])
+        self.shadow[t.key] = Pending(new, "write", staged=dict(items))
+        return new.announce()
+
     def delete(self, obj_id: bytes):
         t = self.tree_for(obj_id)
         if t.key in self.shadow:

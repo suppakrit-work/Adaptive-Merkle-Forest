@@ -1,4 +1,5 @@
 """End-to-end tests for amf/owner.py -- Phases 1-3 and Algorithm 3 for writes."""
+import random
 from dataclasses import replace
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from amf.common.index import digest_tree, verify_digest, verify_row
 from amf.common.merkle import depth_of, root_of
 from amf.owner import Owner, ReadFault, VerificationError
-from tests.helpers import fill, tamper_stored_leaf, tree_of, world
+from tests.helpers import TYPES, fill, tamper_stored_leaf, tree_of, world
 
 
 # ---- Phase 1 -----------------------------------------------------------------------
@@ -244,3 +245,53 @@ def test_recovery_refuses_rows_that_do_not_reach_the_latest_d():
         p.dht.rows = {k: r for k, r in p.dht.rows.items() if k != row.key}   # every node lost one row
     with pytest.raises(VerificationError):
         Owner.recover(owner.mk, owner.sk, list(provs.values()))
+
+
+# ---- batch writes: several objects bound for one tree, one announcement, one check ------------
+
+def test_upload_many_builds_the_same_catalog_as_one_upload_at_a_time_and_keeps_trees_under_n_up():
+    from amf.owner.policy import PolicyManager
+    one, _ = world()
+    many, provs = world(owner=Owner(mk=one.mk, sk=one.sk, s=4, rng=random.Random(1)))
+    PolicyManager(one, upper=16, lower=4)
+    PolicyManager(many, upper=16, lower=4)
+    files = [(f"f{i}", b"data %d" % i, TYPES[i % 3]) for i in range(70)]
+    for name, data, t in files:
+        one.upload(name, data, t)
+    rows = many.upload_many(files)
+    assert rows and sorted((n, i) for n, i, _ in one.catalog.entries()) == \
+        sorted((n, i) for n, i, _ in many.catalog.entries())                  # leaves differ: fresh IVs
+    live = many.live_rows()
+    assert all(r.count <= 16 for r in live) and sum(r.count for r in live) == 70
+    assert all(r.root == root_of(many.catalog.leaves_in(r.lo, r.hi)) for r in live)   # every root is the owner's
+    assert len(live) > 3                                                              # the full trees were split
+    for name, data, _t in files:
+        assert many.read(name) == data
+    assert all(p.shadow == {} for p in provs.values()) and not many.unacked
+    assert many.hashes < one.hashes                                                   # one check per batch, not per object
+
+
+def test_upload_many_checks_the_announced_root_with_every_pending_leaf_in_place():
+    owner, provs = world()
+    files = [(f"g{i}", b"x%d" % i, "image") for i in range(5)]
+    real = provs["A"].write_many
+
+    def lying(items):
+        items = list(items)
+        tid, lo, hi, root, n = real(items[:-1] + [(items[-1][0], b"not what the owner sent")])
+        return tid, lo, hi, root, n
+    provs["A"].write_many = lying
+    with pytest.raises(VerificationError):
+        owner.upload_many(files)
+    assert provs["A"].shadow == {} and len(owner.catalog) == 0 and not owner.unacked
+    provs["A"].write_many = real
+    owner.upload_many(files)
+    assert len(owner.catalog) == 5
+
+
+def test_upload_many_rewrites_and_mixes_types_in_one_call():
+    owner, provs = world()
+    owner.upload("a", b"old", "image")
+    rows = owner.upload_many([("a", b"new", "image"), ("b", b"bb", "video"), ("c", b"cc", "image")])
+    assert len(rows) == 2 and owner.read("a") == b"new" and owner.read("b") == b"bb"
+    assert len(owner.catalog) == 3

@@ -196,3 +196,16 @@ def test_two_migrations_in_opposite_directions_do_not_wait_for_each_other(net):
     for j in jobs:
         j.join(timeout=20)
     assert not any(j.is_alive() for j in jobs) and sorted(r.provider for r in done) == ["A", "B"]
+
+
+def test_a_batch_write_goes_over_http_as_one_call_per_tree(net):
+    provs, svcs = net
+    owner = remote_world(provs)
+    files = [(f"b{i}", b"batch %d" % i, TYPES[i % 3]) for i in range(30)]
+    calls0 = provs["A"].net.calls
+    rows = owner.upload_many(files)
+    assert len(rows) == 3                                            # one batch per type, one tree each
+    assert provs["A"].net.calls - calls0 < 30                        # far fewer calls than objects
+    for name, data, _t in files:
+        assert owner.read(name) == data
+    assert svcs["A"].provider.stats()["objects"] == 10 and svcs["A"].provider.stats()["shadow"] == 0

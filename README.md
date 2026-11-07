@@ -33,7 +33,8 @@ python -m pytest -q
 | `bench.py` | cost of each operation for 10^3 to 10^5 objects, with the baselines of Section V | `results/bench.csv` |
 | `workload.py` | AMF against a forest that never restructures, under uniform and Zipf access | `results/workload.csv` |
 | `owners.py` | 1 to 10,000 owners sharing three providers: one owner's upload, read and audit, and a DHT lookup, as the number of owners grows | `results/owners.csv` |
-| `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP | `results/net.csv` |
+| `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP: batch loading, skewed reads, policy rounds, a fault and its localization | `results/net.csv` |
+| `faults.py` | one injected fault per guarantee of Section IV, and the check that catches it | `results/faults.csv` |
 
 Three providers in Docker on one machine:
 
@@ -43,15 +44,21 @@ python net_demo.py
 docker compose down -v
 ```
 
-Providers somewhere else (one per cloud, for example):
+Providers somewhere else (one per cloud, for example), each started with
+`--debug` for the length of the run so that the fault-injection step can run:
 
 ```
-python -m amf.provider.server --name A --port 8000 --data data/A --peer B=http://<ip-b>:8000 --peer C=http://<ip-c>:8000
-python net_demo.py --provider A=http://<ip-a>:8000 --provider B=http://<ip-b>:8000 --provider C=http://<ip-c>:8000
+python -m amf.provider.server --name A --port 8000 --data data/A --debug --peer B=http://<ip-b>:8000 --peer C=http://<ip-c>:8000
+python net_demo.py --provider A=http://<ip-a>:8000 --provider B=http://<ip-b>:8000 --provider C=http://<ip-c>:8000 \
+                   --files 10000 --batch 200 --reads 2000 --locality 0.1 --rounds 3
 ```
 
-`net_demo.py --sequential` sends each new index row to the DHT nodes one at a
-time instead of all at once, for comparison.
+Objects are loaded as batch writes (`--batch` objects per tree and call, each
+checked by the owner as one write); `--batch 0` writes them one at a time.
+`--zipf a` draws reads from a Zipf law over the objects, `--locality F` sends
+nine reads in ten into the lowest fraction F of each type's identifier range,
+and `--rounds` policy rounds follow. `--sequential` sends each new index row
+to the DHT nodes one at a time instead of all at once, for comparison.
 
 ## Limits of the prototype
 

@@ -15,6 +15,7 @@ over a real network can be read off afterwards (see net_demo.py).
 import http.client
 import socket
 import threading
+import time
 import urllib.parse
 
 from amf.common import wire
@@ -38,9 +39,11 @@ class Connection:
         self.lock = threading.Lock()
         self.conn = None
         self.calls = self.sent = self.received = 0
+        self.seconds = 0.0                       # time spent waiting on the wire, for the owner-side figure
 
     def request(self, method: str, path: str, body: bytes = b"") -> bytes:
         with self.lock:
+            t0 = time.perf_counter()
             for attempt in (1, 2):
                 try:
                     if self.conn is None:
@@ -61,6 +64,7 @@ class Connection:
             self.calls += 1
             self.sent += len(body)
             self.received += len(data)
+            self.seconds += time.perf_counter() - t0
             if resp.status != 200:
                 raise RemoteError(f"HTTP {resp.status} for {path}: {data[:200]!r}")
             return data
@@ -110,6 +114,9 @@ class RemoteProvider:
     # -- writes and restructuring --------------------------------------------------------
     def write(self, obj_id, ct):
         return self.call("provider", "write", obj_id, ct)
+
+    def write_many(self, items):
+        return self.call("provider", "write_many", list(items))
 
     def delete(self, obj_id):
         return self.call("provider", "delete", obj_id)

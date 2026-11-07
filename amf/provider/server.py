@@ -33,7 +33,7 @@ from amf.provider.client import RemoteProvider
 from amf.provider.store import FileStore
 
 PROVIDER_CALLS = {"register_owner", "receive_batch", "receive_row", "store_catalog_entries", "discard_pending",
-                  "acknowledged", "write", "delete", "decompose", "compose", "export_tree", "import_from",
+                  "acknowledged", "write", "write_many", "delete", "decompose", "compose", "export_tree", "import_from",
                   "pending_challenge", "release", "read", "report_reads", "challenge", "recomputed_leaves",
                   "recomputed_root", "stored_leaves", "stored_root", "recount", "halves", "round_halves",
                   "report_mismatches", "stats"}
