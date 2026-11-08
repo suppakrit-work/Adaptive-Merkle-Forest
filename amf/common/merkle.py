@@ -136,12 +136,20 @@ def root_of(leaves: list[bytes]) -> bytes:
     return MerkleTree(list(leaves)).root
 
 
-def verify_path(root: bytes, n: int, i: int, leaf: bytes, path: list[bytes]) -> bool:
-    """Does `path` carry `leaf` at position `i` of an n-leaf tree up to `root`?"""
-    if not 0 <= i < n:
+def is_hash(x) -> bool:
+    return isinstance(x, bytes) and len(x) == HASH_LEN
+
+
+def verify_path(root, n, i, leaf, path) -> bool:
+    """Does `path` carry `leaf` at position `i` of an n-leaf tree up to `root`?  False, never an
+    error, for an answer that is not even well formed: the shape is fixed by (n, i), and an
+    untrusted party chose every other argument."""
+    if type(n) is not int or type(i) is not int or not 0 <= i < n:
+        return False
+    if not is_hash(root) or not is_hash(leaf) or not isinstance(path, (list, tuple)):
         return False
     sides = sides_of(n, i)
-    if len(path) != len(sides):
+    if len(path) != len(sides) or not all(is_hash(h) for h in path):
         return False
     h = leaf
     for sibling, side in zip(path, reversed(sides)):

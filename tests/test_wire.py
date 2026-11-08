@@ -19,8 +19,16 @@ def a_row():
 
 
 def test_plain_values_and_bytes_round_trip():
-    for x in (None, True, 0, -7, 2 ** 600, 1.5, "text", b"", b"\x00\xff" * 40, [1, b"x", [None]]):
+    for x in (None, True, 0, -7, 2 ** 600, "text", b"", b"\x00\xff" * 40, [1, b"x", [None]]):
         assert wire.loads(wire.dumps(x)) == x
+
+
+def test_a_float_is_refused_on_the_wire():
+    """A count of 3.0 is not a count: nothing in the protocol is a float, so one is a malformed answer."""
+    with pytest.raises(ValueError):
+        wire.loads(b'{"result": [1, 2.0]}')
+    with pytest.raises(ValueError):
+        wire.loads(b'3.5')
 
 
 def test_tuples_stay_tuples_and_dicts_may_have_any_keys():

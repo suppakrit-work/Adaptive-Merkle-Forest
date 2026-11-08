@@ -233,9 +233,14 @@ def test_an_old_migration_order_does_not_open_the_pipe_again():
 def test_a_check_that_fails_in_any_way_leaves_nothing_pending():
     owner, provs, files, prov, row = big_image_tree(20)
     _lie_on(prov, "decompose", lambda anns: [anns[0][:3], anns[1]])     # an announcement cut short
-    with pytest.raises(ValueError):
+    with pytest.raises(VerificationError):                               # a verdict, not a crash
         owner.split(row.tree_id)
     assert prov.shadow == {} and owner.index[row.tree_id] == row
+    for bad in ([], [None, None], 7):                                    # not even a list of two
+        _lie_on(prov, "decompose", lambda anns, bad=bad: bad)
+        with pytest.raises(VerificationError):
+            owner.split(row.tree_id)
+        assert prov.shadow == {} and owner.index[row.tree_id] == row
 
 
 def test_evacuation_tries_another_destination_when_one_fails():

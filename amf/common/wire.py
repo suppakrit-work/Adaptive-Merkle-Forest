@@ -55,6 +55,8 @@ def to_wire(x):
 
 
 def from_wire(x):
+    if isinstance(x, float):
+        raise ValueError("the protocol carries no floats")       # a count of 3.0 is not a count
     if isinstance(x, list):
         return [from_wire(v) for v in x]
     if not isinstance(x, dict):

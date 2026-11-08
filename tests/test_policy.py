@@ -183,3 +183,39 @@ def test_the_policy_manager_orders_a_migration_after_a_failed_check():
     (moved,) = pm.failed_check("A")
     assert moved.provider != "A" and not pm.touchable(moved.tree_id)      # left alone for Delta_min rounds
     assert all(owner.read(n) == d for n, d in files.items())
+
+
+def test_work_done_inside_a_parallel_round_is_not_booked_as_waiting():
+    """C1 of the second review: with providers in-process the owner never waits, so the wait of a
+    round with three decisions carried out in a pool must stay near zero."""
+    from amf.common import waits
+    owner, provs = world()
+    owner.parallel = True
+    pm = PolicyManager(owner, upper=1000, lower=250, mu=10)
+    fill(owner, 60)
+    for p in provs.values():
+        p.report_reads = (lambda own, p=p: {k: (10 ** 6, 0) for k in p.live if k[0] == own})
+    for r in owner.live_rows():                                      # make every tree hot and big enough
+        pm.reads[r.tree_id] = [10 ** 6, 0]
+    pm.lower = 5
+    pm.upper = 1000
+    w0 = waits.waited
+    done = pm.tick()
+    assert len(done) == 3                                             # three splits, carried out together
+    assert waits.waited - w0 < 0.002                                  # seconds: the hashing was work, not waiting
+
+
+def test_an_auditors_report_is_rechecked_before_the_owner_acts():
+    """IV-F: the auditor is not trusted; the owner reads what the report names and keeps only what
+    it sees itself."""
+    from amf.auditor.auditor import AuditReport
+    owner, provs = world()
+    pm = PolicyManager(owner, upper=1000, lower=250)
+    fill(owner, 12)
+    prov, row = tree_of(owner, provs, "video")
+    alarm = AuditReport("B", row.tree_id, bad_ciphertext=[1], missing=[2], bad_path=["x", 99])
+    assert pm.on_audit(alarm) == []                                  # a false alarm: nothing confirmed
+    assert owner.index[row.tree_id].provider == "B"
+    prov.corrupt(prov.live[row.key].ids[2], 1)
+    assert pm.on_audit(alarm) == [2]                                 # only the position the owner sees fail
+    assert pm.on_audit(AuditReport("C", row.tree_id, bad_ciphertext=[2])) == []     # the wrong provider named

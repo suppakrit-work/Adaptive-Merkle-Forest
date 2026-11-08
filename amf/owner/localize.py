@@ -103,6 +103,8 @@ class Localizer:
             obj_id, name = self.name_at(row, i)
             try:
                 _tid, _v, _i, _stored, ct, path = prov.read(obj_id)
+                if ct is not None and not isinstance(ct, bytes) or not isinstance(path, (list, tuple)):
+                    raise TypeError("an answer that is not (tid, version, i, stored, CT, path)")
             except Exception as e:
                 rep.verdict, rep.note = "no-answer", f"read of {name}: {type(e).__name__}: {e}"
                 return rep
@@ -186,7 +188,7 @@ class Localizer:
         if not self.owner.parallel or len(items) < 2:
             return [fn(x) for x in items]
         with waits.waiting(), ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
-            return list(pool.map(fn, items))
+            return list(pool.map(waits.pooled(fn), items))
 
     def recount_forest(self) -> dict:
         """One message to every provider: (stored root, r') of each of the owner's trees it holds.
@@ -195,12 +197,15 @@ class Localizer:
         provs = list(self.owner.providers.values())
 
         def ask(p):
+            """tid -> (stored root, r') as the provider reports it; whatever is not that is no answer."""
             try:
-                return p.recount(self.owner.own)
+                got = p.recount(self.owner.own)
+                return {tid: tuple(v) for tid, v in got.items()
+                        if isinstance(tid, bytes) and isinstance(v, (tuple, list)) and len(v) == 2}
             except Exception:
                 return {}
         answers = dict(zip([p.name for p in provs], self._each(ask, provs)))
-        return {r.tree_id: tuple(answers.get(r.provider, {}).get(r.tree_id, (None, None)))
+        return {r.tree_id: answers.get(r.provider, {}).get(r.tree_id, (None, None))
                 for r in self.owner.live_rows()}
 
     def localize_all(self, one_exchange: bool = False) -> list:

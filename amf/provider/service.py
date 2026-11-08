@@ -309,6 +309,9 @@ class Provider:
         """A migration source drops its copy on the owner's second signed order. Returns objects dropped."""
         if not self._order_ok(order, "release", "source"):
             raise PermissionError("no valid release order from the owner")
+        row = self.dht.get(order.own, order.trees[0])
+        if row is None or row.version != order.version:              # an old order does not open this either
+            raise PermissionError("the release order is not for the current row of the tree")
         t = self.retained.pop((order.own, order.trees[0]), None)
         if t is None:
             return 0

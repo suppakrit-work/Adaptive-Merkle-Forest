@@ -22,7 +22,7 @@ import random
 from dataclasses import dataclass, field
 
 from amf.common import crypto
-from amf.common.index import digest_tree, freshest_signed, verify_digest, verify_row, verify_row_in_digest
+from amf.common.index import IndexRow, digest_tree, freshest_signed, verify_digest, verify_row, verify_row_in_digest
 from amf.common.merkle import verify_path
 
 
@@ -64,15 +64,25 @@ class ReadRefused(Exception):
 
 def check_answer(row, i, obj_id, ct, stored, path) -> str:
     """'ok', 'missing' (no ciphertext), 'ciphertext' (the bytes changed, the path is sound) or 'path'
-    (stored hashes wrong)."""
+    (stored hashes wrong, or an answer not even well formed): a verdict, never an error, whatever
+    the provider sent."""
     if ct is None:
         return "missing"
+    if not (isinstance(obj_id, bytes) and len(obj_id) == crypto.ID_LEN and isinstance(ct, bytes)):
+        return "path"
     leaf = crypto.leaf_hash(obj_id, ct)
     if verify_path(row.root, row.count, i, leaf, path):
         return "ok"
     if leaf != stored and verify_path(row.root, row.count, i, stored, path):
         return "ciphertext"
     return "path"
+
+
+def _fields(answer, n: int):
+    """The answer as a tuple of n fields, or None if it is not one."""
+    if isinstance(answer, (tuple, list)) and len(answer) == n:
+        return tuple(answer)
+    return None
 
 
 def _covers(row, v) -> bool:
@@ -93,12 +103,25 @@ class Auditor:
         self.s = s
         self.rng = rng or random.SystemRandom()
 
+    @staticmethod
+    def _ask(fn, default):
+        """A node or provider that raises, or answers nonsense, has given no answer."""
+        try:
+            return fn()
+        except Exception:
+            return default
+
     def _row(self, own, tree_id, providers):
         """Ask more than one node and keep the signed row with the highest version (None if none is signed)."""
-        return freshest_signed(self.keys[own], [p.dht.get(own, tree_id) for p in providers], (own, tree_id))
+        answers = [self._ask(lambda p=p: p.dht.get(own, tree_id), None) for p in providers]
+        return freshest_signed(self.keys[own], answers, (own, tree_id))
 
     def live_rows(self, own, providers):
-        tids = {tid for p in providers for tid in p.dht.tree_ids(own)}
+        tids = set()
+        for p in providers:
+            listed = self._ask(lambda p=p: p.dht.tree_ids(own), [])
+            tids.update(t for t in (listed if isinstance(listed, (list, tuple, set)) else [])
+                        if isinstance(t, bytes))
         rows = [self._row(own, tid, providers) for tid in tids]
         return [r for r in rows if r is not None and not r.retired]
 
@@ -109,8 +132,11 @@ class Auditor:
         positions = list(positions)
         rep = AuditReport(row.provider, row.tree_id)
         answers = {}
-        for a in prov.challenge(row.own, row.tree_id, positions):
-            answers.setdefault(a[0], a)
+        replies = self._ask(lambda: prov.challenge(row.own, row.tree_id, positions), [])
+        for a in (replies if isinstance(replies, (list, tuple)) else []):
+            a = _fields(a, 5)
+            if a is not None and type(a[0]) is int:
+                answers.setdefault(a[0], a)
         for i in positions:                               # Algorithm 4, lines 13-16
             if i not in answers or answers[i][2] is None:  # no answer, or no ciphertext: missing
                 rep.missing.append(i)
@@ -168,12 +194,16 @@ class Reader:
         if not verify_digest(pk, digest):
             raise ValueError("D is not signed by this owner")
         v = int.from_bytes(obj_id, "big")
-        answers = [p.dht.route(obj_id) for p in providers]          # every node asked, not just one
-        newer = [d for *_, d in answers if d is not None and d.version > digest.version and verify_digest(pk, d)]
+        answers = []                                                 # every node asked, not just one
+        for p in providers:
+            a = _fields(Auditor._ask(lambda p=p: p.dht.route(obj_id), None), 5)
+            if a is not None:
+                answers.append(a)
+        newer = [d for *_, d in answers if verify_digest(pk, d) and d.version > digest.version]
         d = max(newer, key=lambda x: x.version) if newer else digest
         stale = False
         for row, i, _t, path, _d in answers:
-            if row is None or row.own != own or not _covers(row, v) or not verify_row(pk, row):
+            if not isinstance(row, IndexRow) or row.own != own or not _covers(row, v) or not verify_row(pk, row):
                 continue
             if verify_row_in_digest(d, row, i, path):
                 return row
@@ -184,7 +214,10 @@ class Reader:
         """Returns the ciphertext once it reaches the signed root; decryption keys are outside this work."""
         row = self.row_for(obj_id, digest, providers)
         prov = {p.name: p for p in providers}[row.provider]
-        tid, version, i, stored, ct, path = prov.read(obj_id)
+        answer = _fields(Auditor._ask(lambda: prov.read(obj_id), None), 6)
+        if answer is None:
+            raise ReadRefused(row.provider, row.tree_id, -1, "no answer")
+        tid, version, i, stored, ct, path = answer
         if (tid, version) != (row.tree_id, row.version):
             # the provider names another row: fetch the newest again before judging, so a read that
             # crosses a write blames no one, and a provider naming a row no node holds is refused

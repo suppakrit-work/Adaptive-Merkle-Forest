@@ -20,8 +20,8 @@ from dataclasses import replace
 from amf.auditor import Auditor, Reader, ReadRefused
 from amf.auditor.auditor import AuditReport
 from amf.common import crypto
-from amf.common.index import IndexRow, generate_signing_key, new_tree_id, sign_row
-from amf.common.merkle import MerkleTree, node_hash, root_of
+from amf.common.index import IndexRow, generate_signing_key, new_tree_id, sign_row, tag_range
+from amf.common.merkle import EMPTY_ROOT, MerkleTree, node_hash, root_of
 from amf.owner import Owner, ReadFault, VerificationError
 from amf.owner.localize import Localizer
 from amf.owner.policy import PolicyManager
@@ -71,6 +71,11 @@ def read_fault(fn):
         return e
 
 
+def pos(e):
+    """The position a fault names, or '-' when the check did not fire (so a miss prints as NO, not a crash)."""
+    return e.position if e is not None else "-"
+
+
 class Table:
     def __init__(self):
         self.rows = []
@@ -91,12 +96,12 @@ def detection(tb, args):
     provs["B"].corrupt(obj_id, at=3)
     e = read_fault(lambda: owner.read(name))
     tb.add("IV-B", "ciphertext altered at B", "owner read (Alg 1)", e and e.kind == "ciphertext",
-           f"B tree {row.tree_id.hex()[:6]} pos {e.position} = {name}")
+           f"B tree {row.tree_id.hex()[:6]} pos {pos(e)} = {name}")
     reader = Reader([owner.pk])
     oid, d = owner.reader_view(name, name.split("-")[0])
     e = read_fault(lambda: reader.read(oid, d, list(provs.values())))
     tb.add("IV-B", "ciphertext altered at B", "data user read (Alg 1)", e and e.kind == "ciphertext",
-           f"B pos {e.position}")
+           f"B pos {pos(e)}")
     rep = Auditor([owner.pk], s=row.count, rng=random.Random(1)).audit_tree(row, list(provs.values()))
     tb.add("IV-B", "ciphertext altered at B", "audit, all positions (Alg 4)", rep.bad_ciphertext == [k],
            f"B pos {rep.bad_ciphertext}")
@@ -106,7 +111,7 @@ def detection(tb, args):
     obj_id, name, k = victim_of(owner, row)
     del provs["C"].objects[obj_id]
     e = read_fault(lambda: owner.read(name))
-    tb.add("IV-B", "object lost at C", "owner read (Alg 1)", e and e.kind == "missing", f"C pos {e.position} = {name}")
+    tb.add("IV-B", "object lost at C", "owner read (Alg 1)", e and e.kind == "missing", f"C pos {pos(e)} = {name}")
     rep = Auditor([owner.pk], s=row.count, rng=random.Random(1)).audit_tree(row, list(provs.values()))
     tb.add("IV-B", "object lost at C", "audit, all positions (Alg 4)", rep.missing == [k], f"C pos {rep.missing}")
     loc = Localizer(owner).localize(row.tree_id)
@@ -119,10 +124,10 @@ def detection(tb, args):
     _obj_id, name, k = victim_of(owner, row, 1)
     e = read_fault(lambda: owner.read(name))
     tb.add("IV-B", "stored hash rewritten at A", "owner read (Alg 1)", e and e.kind == "path",
-           f"A tree {row.tree_id.hex()[:6]} pos {e.position}, kind path")
+           f"A tree {row.tree_id.hex()[:6]} pos {pos(e)}, kind path")
     loc = Localizer(owner).localize(row.tree_id)
-    tb.add("IV-B", "stored hash rewritten at A", "walk (Alg 5)", loc.verdict == "stored-hashes-damaged",
-           f"tree {row.tree_id.hex()[:6]}: {loc.verdict}")
+    tb.add("IV-B", "stored hash rewritten at A", "stored root (Alg 5 line 2)", loc.verdict == "stored-hashes-damaged" and loc.rounds == 0,
+           f"tree {row.tree_id.hex()[:6]}: {loc.verdict}, no walk needed")
 
     # freshness: one node rolled back, every node rolled back, a withheld row
     owner, provs, names = world()
@@ -272,15 +277,20 @@ def attribution(tb, args):
     """IV-D: a failed check names the provider the row names; a failed migration is tried elsewhere."""
     owner, provs, names = world()
     other = generate_signing_key()
+    for p in provs.values():
+        p.register_owner(other.public_key())                           # a known owner, so only the checks refuse
     row = tree_at(owner, "A")
     forged = sign_row(other, replace(row, provider="B", version=row.version + 5))
     accepted = any(p.dht.accept(forged) for p in provs.values())
-    tb.add("IV-D", "row forged by another key under the victim's tid", "DHT node, Theorem 1(a)", not accepted,
-           "refused by every node")
+    tb.add("IV-D", "row forged by another registered key under the victim's tid", "DHT node, Theorem 1(a)", not accepted,
+           "refused by every node: not the owner's signature")
     forged = sign_row(other, replace(row, own=crypto.owner_tag(other.public_key()), version=row.version + 5))
     accepted = any(p.dht.accept(forged) for p in provs.values())
-    tb.add("IV-D", "another owner's row over the victim's range", "DHT node, range in own space", not accepted,
-           "refused by every node")
+    other_own = crypto.owner_tag(other.public_key())
+    own_row = sign_row(other, IndexRow(other_own, new_tree_id(), *tag_range(other_own, 1), "B", EMPTY_ROOT, 0, 1))
+    tb.add("IV-D", "another registered owner's row over the victim's range", "DHT node, range in own space",
+           not accepted and all(p.dht.accept(own_row) for p in provs.values()),
+           "refused by every node; the same owner's row over its own range is accepted")
 
     owner, provs, names = world(policy=dict(upper=1000, lower=250))
     row = tree_at(owner, "A")
@@ -352,25 +362,28 @@ def reports(tb, args):
     tb.add("IV-F", "every provider reports 10^6 reads on one half (trees < 2 N_low)", "policy (Alg 2), floor 2 N_low",
            n_split == 0 and intact, f"{n_split} splits in 9 rounds; forest intact: {intact}")
 
-    owner, provs, names = world(n=0, policy=dict(upper=1000, lower=250, interval=3))
-    files = [(f"image-{i}", b"x" * 8, "image") for i in range(600)]
-    owner.upload_many(files)
+    owner, provs, names = world(n=0, policy=dict(upper=4000, lower=250, interval=3))
+    owner.upload_many([(f"image-{i}", b"x" * 8, "image") for i in range(2400)])
     for p in provs.values():
         p.report_reads = (lambda own, p=p: {k: (10 ** 6, 0) for k in p.live if k[0] == own})
-    decisions = [owner.policy.tick() for _ in range(9)]
-    n_split = sum(d.kind == "split" for ds in decisions for d in ds)
+    rounds = [k + 1 for k in range(9) if any(d.kind == "split" for d in owner.policy.tick())]
     intact = all(r.root == root_of(owner.catalog.leaves_in(r.lo, r.hi)) for r in owner.live_rows())
-    tb.add("IV-F", "the same lie on a 600-leaf tree", "policy (Alg 2), hysteresis Delta_min = 3",
-           n_split <= 3 and intact, f"{n_split} split(s) in 9 rounds (at most one per Delta_min); forest intact: {intact}",
+    tb.add("IV-F", "the same lie on a 2400-leaf tree (halves stay above 2 N_low)", "policy (Alg 2), hysteresis Delta_min = 3",
+           rounds == [1, 4, 7] and intact, f"splits only in rounds {rounds}: a tree waits Delta_min rounds; forest intact: {intact}",
            note="each split still checked by Alg 3")
 
-    owner, provs, names = world()
+    owner, provs, names = world(policy=dict(upper=1000, lower=250))
     row = tree_at(owner, "B")
     obj_id, name, k = victim_of(owner, row)
     alarm = AuditReport("B", row.tree_id, bad_ciphertext=[k])          # an auditor that cries wolf
-    rechecked = read_fault(lambda: owner.read(name)) is None
-    tb.add("IV-F", "auditor raises a false alarm on B", "owner rechecks with a read", rechecked and not alarm.ok,
-           "object intact; no migration ordered")
+    confirmed = owner.policy.on_audit(alarm)
+    still_at_b = owner.index[row.tree_id].provider == "B"
+    tb.add("IV-F", "auditor raises a false alarm on B", "owner rechecks with a read (on_audit)",
+           confirmed == [] and still_at_b, f"confirmed {confirmed}; tree still at B: {still_at_b}")
+    provs["B"].corrupt(obj_id, 1)
+    confirmed = owner.policy.on_audit(alarm)
+    tb.add("IV-F", "the same alarm when B really is damaged", "owner rechecks with a read (on_audit)",
+           confirmed == [k], f"confirmed {confirmed} = {name}")
 
 
 def main():

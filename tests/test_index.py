@@ -90,7 +90,8 @@ def test_ranges_of_a_split_meet_exactly_at_p():
 def test_node_accepts_only_signed_rows_with_a_higher_version():
     n = node()
     v1 = sign_row(SK, make_row(version=1))
-    assert n.accept(v1) and not n.accept(v1)
+    assert n.accept(v1) and n.accept(v1)                             # the same row again changes nothing
+    assert not n.accept(sign_row(SK, replace(v1, count=9)))          # another row of the same version does not
     v2 = sign_row(SK, replace(v1, version=2, count=5))
     assert n.accept(v2) and n.get(OWN, v1.tree_id).count == 5
     assert not n.accept(v1)                                          # an old row cannot come back

@@ -237,7 +237,7 @@ class DHTNode:
         lo, hi = owner_space(row.own)
         if not (lo <= row.lo <= row.hi <= hi):
             return False
-        return held is None or row.version > held.version
+        return held is None or row.version > held.version or row == held     # a resend of the same row is idle
 
     def _put(self, row: IndexRow) -> None:
         """A split deletes one key from the B+ tree and inserts two, a merge the other way round,
@@ -268,7 +268,8 @@ class DHTNode:
             staged[row.key] = row
         if digest is not None:
             pk, prev = self.keys.get(digest.own), self.digests.get(digest.own)
-            if pk is None or not verify_digest(pk, digest) or (prev and digest.version <= prev.version):
+            if pk is None or not verify_digest(pk, digest) or (prev and digest.version <= prev.version
+                                                                and digest != prev):
                 return False
             self.digests[digest.own] = digest
         for row in staged.values():
@@ -329,8 +330,10 @@ def freshest(rows) -> IndexRow | None:
 
 def freshest_signed(pk, rows, key) -> IndexRow | None:
     """The highest version among the rows for key (own, tid) whose signature verifies under pk, so a node
-    that hands out a forged row with a high version only costs one signature check."""
-    for r in sorted((r for r in rows if r is not None and r.key == key), key=lambda r: r.version, reverse=True):
+    that hands out a forged row with a high version only costs one signature check.  Whatever is not
+    even a row with an integer version is passed over."""
+    rows = [r for r in rows if isinstance(r, IndexRow) and type(r.version) is int and r.key == key]
+    for r in sorted(rows, key=lambda r: r.version, reverse=True):
         if verify_row(pk, r):
             return r
     return None

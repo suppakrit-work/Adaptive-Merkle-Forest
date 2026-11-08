@@ -26,10 +26,10 @@ from dataclasses import replace
 
 from amf.common import crypto, waits
 from amf.owner.catalog import TYPES_KEY, Catalog, seal_entry, seal_tombstone, seal_types
-from amf.common.index import (ForestDigest, IndexRow, digest_tree, freshest_signed, generate_signing_key,
+from amf.common.index import (TREE_ID_LEN, ForestDigest, IndexRow, digest_tree, freshest_signed, generate_signing_key,
                        id_to_int, new_tree_id, retire, row_leaf, sign_digest, sign_row, tag_range,
                        verify_digest)
-from amf.common.merkle import EMPTY_ROOT, left_size, node_hash, root_of, verify_path
+from amf.common.merkle import EMPTY_ROOT, is_hash, left_size, node_hash, root_of, verify_path
 from amf.common.orders import Order, sign_order
 
 
@@ -70,6 +70,7 @@ class Owner:
         self.policy = None                              # policy.PolicyManager attaches itself here
         # the owner keeps CT until the provider acknowledges
         self.unacked: dict[bytes, bytes] = {}
+        self.behind: set = set()                        # DHT nodes that refused or missed a batch (resend)
         self.providers: dict = {}
         # send to every DHT node at once (III-C, Parallelism); worth it when the providers are remote
         self.parallel = parallel
@@ -117,11 +118,28 @@ class Owner:
         entries = {slot: (version, self._seal(slot, version)) for slot in changed} if changed else None
 
         def send(prov):
-            prov.receive_batch(signed, self.digest)
+            try:
+                ok = prov.receive_batch(signed, self.digest)
+            except Exception:
+                ok = False
+            if ok is True:
+                self.behind.discard(prov.name)
+            else:                                       # a node that refused or missed a batch holds old rows
+                self.behind.add(prov.name)
+                return
             if entries:
                 prov.store_catalog_entries(self.own, entries)
         self._to_every_provider(send)
         return signed
+
+    def resend(self, provider_name: str) -> bool:
+        """Bring a node that fell behind up to date: the whole table, the current D and the catalog."""
+        prov = self.providers[provider_name]
+        ok = prov.receive_batch(list(self.index.values()), self.digest)
+        if ok is True:
+            prov.store_catalog_entries(self.own, self._full_copy())
+            self.behind.discard(provider_name)
+        return ok is True
 
     def _to_every_provider(self, send) -> None:
         """Send the same message to every provider and wait for every answer.  With parallel=True the
@@ -135,7 +153,7 @@ class Owner:
         if self._pool is None:
             self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="amf-owner")
         with waits.waiting():
-            for f in [self._pool.submit(send, p) for p in provs]:
+            for f in [self._pool.submit(waits.pooled(send), p) for p in provs]:
                 f.result()
 
     def _seal(self, slot: bytes, version: int) -> bytes:
@@ -196,8 +214,28 @@ class Owner:
         if root_of(leaves) != announced_root:
             raise VerificationError("the announced root is not the root over the owner's own leaves")
 
+    @staticmethod
+    def _announcement(ann) -> tuple:
+        """An announcement as (tid, lo, hi, root, n) with the types a row can carry, or a refusal:
+        the provider chose every field, and a count of 3.0 passes no check here."""
+        if not isinstance(ann, (tuple, list)) or len(ann) != 5:
+            raise VerificationError("the announcement is not (tid, lo, hi, root, count)")
+        tid, lo, hi, root, n = ann
+        if not (isinstance(tid, bytes) and len(tid) == TREE_ID_LEN and type(lo) is int and type(hi) is int
+                and is_hash(root) and type(n) is int and 0 <= n):
+            raise VerificationError("the announcement is not well formed")
+        return tid, lo, hi, root, n
+
+    @staticmethod
+    def _discard(prov, own, *tree_ids) -> None:
+        """Tell the provider to throw its Shadow Area away; a provider that cannot be told is left as it is."""
+        try:
+            prov.discard_pending(own, *tree_ids)
+        except Exception:
+            pass
+
     def _check_write(self, row, announced, obj_id, leaf) -> None:
-        tid, lo, hi, root, n = announced
+        tid, lo, hi, root, n = self._announcement(announced)
         if tid != row.tree_id or (lo, hi) != (row.lo, row.hi):
             raise VerificationError("the provider announced another tree or range")
         expected = self._expected_leaves(row, obj_id, leaf)
@@ -215,11 +253,11 @@ class Owner:
             row = self.policy.before_write(row, obj_id)         # the size test, on the count a write would produce
         prov = self.providers[row.provider]
         self.unacked[obj_id] = ct
-        announced = prov.write(obj_id, ct)
-        try:
+        try:                                            # whatever fails from here on, the provider is told
+            announced = prov.write(obj_id, ct)
             self._check_write(row, announced, obj_id, leaf)
         except Exception:
-            prov.discard_pending(self.own, row.tree_id)
+            self._discard(prov, self.own, row.tree_id)
             self.unacked.pop(obj_id, None)
             raise
         self.catalog.put(name, obj_id, leaf)
@@ -233,8 +271,9 @@ class Owner:
     def upload_many(self, files) -> list:
         """Phase 2 for many files at once: the objects bound for one tree go to the provider as one
         batch write, checked with all the pending leaves in place (Algorithm 3, line 12).  A tree is
-        never taken past N_up: when a batch would, the tree is filled, split at its median, and the
-        rest goes on into the halves.  Returns the rows signed, in order."""
+        never taken past N_up: when a batch would, the tree is first split at the median of what it
+        holds and what is arriving (PolicyManager.before_batch), and the batch goes on into the
+        halves; an empty tree is filled to N_up first.  Returns the rows signed, in order."""
         prepared = {}
         for name, data, file_type in files:
             obj_id, ct, leaf = self.prepare(name, data, file_type)
@@ -251,9 +290,9 @@ class Owner:
             while k < len(todo) and row.covers(id_to_int(todo[k])):
                 k += 1
             room = len(todo) if self.policy is None else max(0, self.policy.upper - row.count)
-            new_here = sum(self.catalog.name_of(i) is None for i in todo[:k])
-            if room < new_here and row.count >= 2:            # the tree would pass N_up: split it first
-                self.policy.before_write(row, todo[0], k=new_here)
+            new_ids = [i for i in todo[:k] if self.catalog.name_of(i) is None]
+            if room < len(new_ids) and row.count >= 2:        # the tree would pass N_up: split it first
+                self.policy.before_batch(row, new_ids)
                 continue
             chunk, fresh = [], 0                              # else fill the tree up to N_up and go on
             for i in todo[:k]:
@@ -266,9 +305,9 @@ class Owner:
             batch = [(i, prepared[i][1]) for i in chunk]
             for i, ct in batch:
                 self.unacked[i] = ct
-            announced = prov.write_many(batch)
             try:
-                tid, lo, hi, root, n = announced
+                announced = prov.write_many(batch)
+                tid, lo, hi, root, n = self._announcement(announced)
                 if tid != row.tree_id or (lo, hi) != (row.lo, row.hi):
                     raise VerificationError("the provider announced another tree or range")
                 expected = self._expected_leaves_many(row, {i: prepared[i][2] for i in chunk})
@@ -276,7 +315,7 @@ class Owner:
                     raise VerificationError(f"count {n}, the owner's books say {len(expected)}")
                 self._check_root(root, expected)
             except Exception:
-                prov.discard_pending(self.own, row.tree_id)
+                self._discard(prov, self.own, row.tree_id)
                 for i in chunk:
                     self.unacked.pop(i, None)
                 raise
@@ -297,11 +336,11 @@ class Owner:
         obj_id, _leaf = self.catalog.get(name)
         row = self.row_for(obj_id)
         prov = self.providers[row.provider]
-        announced = prov.delete(obj_id)
         try:
+            announced = prov.delete(obj_id)
             self._check_write(row, announced, obj_id, None)
         except Exception:
-            prov.discard_pending(self.own, row.tree_id)
+            self._discard(prov, self.own, row.tree_id)
             raise
         self._count_write(row, obj_id)
         self.catalog.remove(name)
@@ -318,16 +357,26 @@ class Owner:
     # -- Phase 3: the owner's own reads --------------------------------------------
 
     def read(self, name: str) -> bytes:
+        """Algorithm 1 as the owner runs it: every failure is a verdict naming the provider, the tree
+        and the position, whatever the provider answered, or did not."""
         obj_id, _leaf = self.catalog.get(name)
         row = self.row_for(obj_id)
         prov = self.providers[row.provider]
-        tid, version, i, stored, ct, path = prov.read(obj_id)
+        try:
+            answer = prov.read(obj_id)
+        except Exception as e:
+            raise ReadFault(row.provider, row.tree_id, -1, "no answer") from e
+        if not isinstance(answer, (tuple, list)) or len(answer) != 6:
+            raise ReadFault(row.provider, row.tree_id, -1, "no answer")
+        tid, version, i, stored, ct, path = answer
         if tid != row.tree_id or version != row.version:
             raise ReadFault(row.provider, row.tree_id, i, "wrong tree or version")
-        if i != self.catalog.position(obj_id, row.lo):
+        if type(i) is not int or i != self.catalog.position(obj_id, row.lo):
             raise ReadFault(row.provider, row.tree_id, i, "wrong position")
         if ct is None:
             raise ReadFault(row.provider, row.tree_id, i, "missing")
+        if not isinstance(ct, bytes):
+            raise ReadFault(row.provider, row.tree_id, i, "path")
         leaf = crypto.leaf_hash(obj_id, ct)
         if not verify_path(row.root, row.count, i, leaf, path):
             kind = "ciphertext" if verify_path(row.root, row.count, i, stored, path) else "path"
@@ -346,7 +395,7 @@ class Owner:
 
     def _check_announced_range_count(self, ann, lo: int, hi: int) -> None:
         """Algorithm 3, lines 1-3: the range the order implies, the count of catalog identifiers in it."""
-        _tid, a_lo, a_hi, _root, n = ann
+        _tid, a_lo, a_hi, _root, n = self._announcement(ann)
         if (a_lo, a_hi) != (lo, hi):
             raise VerificationError("the announced range is not the one the order implies")
         if n != self.catalog.count(lo, hi):
@@ -367,9 +416,16 @@ class Owner:
             raise ValueError("the boundary must lie inside the range")
         id_a, id_b = new_tree_id(), new_tree_id()
         order = self._order("split", [tree_id], [id_a, id_b], p, row.provider, version=row.version)
-        ann_a, ann_b = prov.decompose(order)
+        try:
+            answer = prov.decompose(order)
+        except Exception:
+            self._discard(prov, self.own, id_a, id_b)
+            raise
         with self._lock:
             try:
+                if not isinstance(answer, (tuple, list)) or len(answer) != 2:
+                    raise VerificationError("a split announces two trees")
+                ann_a, ann_b = self._announcement(answer[0]), self._announcement(answer[1])
                 if (ann_a[0], ann_b[0]) != (id_a, id_b):
                     raise VerificationError("the provider announced other tree identifiers")
                 self._check_announced_range_count(ann_a, row.lo, p)
@@ -383,7 +439,7 @@ class Owner:
                     self._check_root(r_a, self.catalog.leaves_in(row.lo, p))
                     self._check_root(r_b, self.catalog.leaves_in(p, row.hi))
             except Exception:
-                prov.discard_pending(self.own, id_a, id_b)
+                self._discard(prov, self.own, id_a, id_b)
                 raise
             a = IndexRow(self.own, id_a, row.lo, p, row.provider, r_a, ann_a[4], 1)
             b = IndexRow(self.own, id_b, p, row.hi, row.provider, r_b, ann_b[4], 1)
@@ -398,9 +454,16 @@ class Owner:
         prov = self.providers[a.provider]
         id_ab = new_tree_id()
         order = self._order("merge", [id_a, id_b], [id_ab], source=a.provider, version=a.version)
-        (ann,) = prov.compose(order)
+        try:
+            answer = prov.compose(order)
+        except Exception:
+            self._discard(prov, self.own, id_ab)
+            raise
         with self._lock:
             try:
+                if not isinstance(answer, (tuple, list)) or len(answer) != 1:
+                    raise VerificationError("a merge announces one tree")
+                ann = self._announcement(answer[0])
                 if ann[0] != id_ab:
                     raise VerificationError("the provider announced another tree identifier")
                 self._check_announced_range_count(ann, a.lo, b.hi)
@@ -412,7 +475,7 @@ class Owner:
                 else:
                     self._check_root(r_new, self.catalog.leaves_in(a.lo, b.hi))
             except Exception:
-                prov.discard_pending(self.own, id_ab)
+                self._discard(prov, self.own, id_ab)
                 raise
             self._forget_counts(id_a, id_b)
             new = IndexRow(self.own, id_ab, a.lo, b.hi, a.provider, r_new, n_new, 1)
@@ -426,8 +489,11 @@ class Owner:
         src, dst = self.providers[row.provider], self.providers[destination]
         order = self._order("migrate", [tree_id], source=row.provider, destination=destination,
                             version=row.version)
-        (ann,) = dst.import_from(order, src)
         try:
+            answer = dst.import_from(order, src)
+            if not isinstance(answer, (tuple, list)) or len(answer) != 1:
+                raise VerificationError("a migration announces one tree")
+            ann = self._announcement(answer[0])
             if ann[0] != tree_id:
                 raise VerificationError("the destination announced another tree")
             self._check_announced_range_count(ann, row.lo, row.hi)
@@ -435,7 +501,7 @@ class Owner:
                 raise VerificationError("a migration changes nothing inside the tree")
             self._challenge_pending(dst, row)                          # Algorithm 3, line 9
         except Exception:
-            dst.discard_pending(self.own, tree_id)
+            self._discard(dst, self.own, tree_id)
             raise
         return self._publish([replace(row, provider=destination, version=row.version + 1)])[0]
 
@@ -443,14 +509,16 @@ class Owner:
         if row.count == 0:
             return
         sample = self.rng.sample(range(row.count), min(self.s, row.count))
-        answers = {a[0]: a for a in dst.pending_challenge(self.own, row.tree_id, sample)}
+        replies = dst.pending_challenge(self.own, row.tree_id, sample)
+        answers = {a[0]: a for a in (replies if isinstance(replies, (list, tuple)) else [])
+                   if isinstance(a, (tuple, list)) and len(a) == 5 and type(a[0]) is int}
         for i in sample:                                   # an answer for every position asked, at that position
             if i not in answers:
                 raise VerificationError(f"no answer for position {i} at the destination")
             _i, obj_id, ct, _stored, path = answers[i]
             if obj_id != self.catalog.id_at(row.lo, i):
                 raise VerificationError(f"position {i} holds another identifier")
-            if ct is None:
+            if not isinstance(ct, bytes):
                 raise VerificationError(f"position {i} is missing at the destination")
             leaf = crypto.leaf_hash(obj_id, ct)
             self.hashes += 1 + len(path)
@@ -511,21 +579,36 @@ class Owner:
         """Whoever holds MK and the signing key rebuilds catalog, type table, index and D.  Only what
         verifies is used: the newest signed row of each tree, the newest signed D, the newest catalog
         entry that opens under MK; and the rows must recompute to that D."""
+        def ask(fn, default):
+            try:
+                return fn()
+            except Exception:
+                return default
         owner = cls(mk=mk, sk=sk, s=s)
-        copies = [p.catalog_copy.get(owner.own, {}) for p in providers]
+        copies = [ask(lambda p=p: p.catalog_copy.get(owner.own, {}), {}) for p in providers]
         owner.catalog, owner.type_table = Catalog.from_copies(mk, copies)
-        tids = {tid for p in providers for tid in p.dht.tree_ids(owner.own)}
+        tids = set()
+        for p in providers:
+            listed = ask(lambda p=p: p.dht.tree_ids(owner.own), [])
+            tids.update(t for t in (listed if isinstance(listed, (list, tuple, set)) else []) if isinstance(t, bytes))
         for tid in tids:
-            row = freshest_signed(owner.pk, [p.dht.get(owner.own, tid) for p in providers], (owner.own, tid))
+            answers = [ask(lambda p=p: p.dht.get(owner.own, tid), None) for p in providers]
+            row = freshest_signed(owner.pk, answers, (owner.own, tid))
             if row is not None:
                 owner.index[row.tree_id] = row
-        digests = [p.dht.digest(owner.own) for p in providers]
-        digests = [d for d in digests if d is not None and verify_digest(owner.pk, d)]
+        digests = [ask(lambda p=p: p.dht.digest(owner.own), None) for p in providers]
+        digests = [d for d in digests if verify_digest(owner.pk, d)]
         owner.digest = max(digests, key=lambda d: d.version) if digests else None
         if owner.digest is not None:
             tree, _ = digest_tree(owner.index.values())
             if (tree.root, tree.n) != (owner.digest.root, owner.digest.count):
                 raise VerificationError("the rows the providers hold do not recompute to the latest D")
+        # the catalog copy is the providers' word: every live row must recompute from it (III-B)
+        for row in owner.live_rows():
+            leaves = owner.catalog.leaves_in(row.lo, row.hi)
+            if len(leaves) != row.count or root_of(leaves) != row.root:
+                raise VerificationError(f"the catalog copy does not recompute to the signed root of tree "
+                                        f"{row.tree_id.hex()[:8]}: an entry is stale or missing")
         for p in providers:
             owner.providers[p.name] = p
         return owner

@@ -209,3 +209,23 @@ def test_a_batch_write_goes_over_http_as_one_call_per_tree(net):
     for name, data, _t in files:
         assert owner.read(name) == data
     assert svcs["A"].provider.stats()["objects"] == 10 and svcs["A"].provider.stats()["shadow"] == 0
+
+
+def test_a_reply_that_does_not_decode_still_clears_the_shadow_area(net):
+    """A3 over HTTP: a reply the owner cannot even decode must not leave the honest provider's
+    pending tree behind, or the owner's next write to that tree fails."""
+    provs, svcs = net
+    owner = remote_world(provs)
+    fill(owner, 6)
+    real = provs["A"].net.request
+
+    def garbled(method, path, body=b""):
+        data = real(method, path, body)
+        return b'{"result": [1, 2.0]}' if path.endswith("/write") else data      # the announcement, garbled
+    provs["A"].net.request = garbled
+    with pytest.raises(ValueError):
+        owner.upload("new", b"x", "image")
+    provs["A"].net.request = real
+    assert svcs["A"].provider.stats()["shadow"] == 0 and not owner.unacked
+    owner.upload("new", b"x", "image")
+    assert owner.read("new") == b"x"

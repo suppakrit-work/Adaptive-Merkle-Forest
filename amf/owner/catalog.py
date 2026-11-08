@@ -139,6 +139,7 @@ class Catalog:
                     candidates.setdefault(slot, []).append(tuple(entry))
         good = {}
         for slot, entries in candidates.items():
+            entries = [e for e in entries if type(e[0]) is int and isinstance(e[1], bytes)]
             for version, blob in sorted(entries, key=lambda e: e[0], reverse=True):
                 try:
                     open_entry(mk, slot, version, blob)

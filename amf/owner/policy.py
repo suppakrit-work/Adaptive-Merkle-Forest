@@ -113,6 +113,24 @@ class PolicyManager:
             taken.update((a.tree_id, b.tree_id))
         return out
 
+    def on_audit(self, report) -> list:
+        """An auditor's report is not trusted (IV-F): the owner reads every position the report
+        names and keeps only the failures it sees itself.  Returns those positions; the owner then
+        repairs and moves the tree through failed_check, or does nothing if the alarm was false."""
+        row = self.owner.index.get(report.tree_id)
+        if row is None or row.retired or row.provider != report.provider:
+            return []
+        confirmed = []
+        named = {i for part in (report.bad_ciphertext, report.bad_path, report.missing) for i in part
+                 if type(i) is int and 0 <= i < row.count}             # an auditor may name nonsense too
+        for i in sorted(named):
+            name = self.owner.catalog.name_of(self.owner.catalog.id_at(row.lo, i))
+            try:
+                self.owner.read(name)
+            except Exception:
+                confirmed.append(i)
+        return confirmed
+
     def failed_check(self, provider_name: str, trees=None, repairs=None) -> list:
         """A provider has failed a check: repair the named objects, move the trees away (owner.evacuate),
         and leave the moved trees alone for Delta_min rounds."""
@@ -129,6 +147,20 @@ class PolicyManager:
             return self.owner.row_for(obj_id)
         return row
 
+    def before_batch(self, row, new_ids: list) -> None:
+        """The size test for a batch that would take the tree past N_up: split it at the median of
+        the identifiers it holds and the ones arriving, so both halves come out near equal rather
+        than one half taking the whole batch.  That boundary is not the tree's own median, so the
+        owner recomputes the two roots (Algorithm 3, line 12) instead of the one-hash check."""
+        if row.count + len(new_ids) <= self.upper or row.count < 2:
+            return
+        union = sorted(set(self.owner.catalog.ids_in(row.lo, row.hi)) | set(new_ids))
+        p = int.from_bytes(union[len(union) // 2], "big")
+        if not row.lo < p < row.hi or p == self.owner.median_boundary(row):
+            p = None                                            # the tree's own median after all
+        a, b, _ = self.owner.split(row.tree_id, p)
+        self._after_split(row.tree_id, a, b)
+
     # -- one policy round ----------------------------------------------------------
 
     def tick(self) -> list[Decision]:
@@ -137,7 +169,7 @@ class PolicyManager:
         decisions = self.decide()
         if self.owner.parallel and len(decisions) > 1:       # the trees of one round are disjoint
             with waits.waiting(), ThreadPoolExecutor(max_workers=min(8, len(decisions))) as pool:
-                outcomes = list(pool.map(self._carry_out, decisions))
+                outcomes = list(pool.map(waits.pooled(self._carry_out), decisions))
         else:
             outcomes = [self._carry_out(d) for d in decisions]
         done = []

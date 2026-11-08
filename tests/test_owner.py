@@ -295,3 +295,36 @@ def test_upload_many_rewrites_and_mixes_types_in_one_call():
     rows = owner.upload_many([("a", b"new", "image"), ("b", b"bb", "video"), ("c", b"cc", "image")])
     assert len(rows) == 2 and owner.read("a") == b"new" and owner.read("b") == b"bb"
     assert len(owner.catalog) == 3
+
+
+def test_a_batch_that_overflows_splits_at_the_median_of_old_and_new_identifiers():
+    """B1 of the second review: filling with the lowest identifiers and splitting at the tree's own
+    median left one half with the whole rest of the batch, split again down to 2 leaves."""
+    from amf.owner.policy import PolicyManager
+    owner, _ = world()
+    PolicyManager(owner, upper=1000, lower=250)
+    owner.upload_many([(f"image-{i}", b"d", "image") for i in range(3000)])
+    sizes = sorted(r.count for r in owner.live_rows() if r.count)
+    assert sum(sizes) == 3000 and max(sizes) <= 1000 and min(sizes) >= 250     # one row per N_low at most
+    assert len(sizes) <= 3000 // 250
+    owner.upload_many([(f"image-{i}", b"d", "image") for i in range(3000, 6000)])
+    sizes = sorted(r.count for r in owner.live_rows() if r.count)
+    assert sum(sizes) == 6000 and max(sizes) <= 1000 and min(sizes) >= 250
+
+
+def test_a_node_that_misses_a_batch_is_noted_and_brought_up_to_date():
+    """B5 of the second review: the owner did not notice a node that refused a batch."""
+    owner, provs = world()
+    fill(owner, 6)
+    real = provs["C"].receive_batch
+    provs["C"].receive_batch = lambda rows, digest=None: False
+    owner.upload("late", b"x", "image")
+    assert owner.behind == {"C"}
+    provs["C"].receive_batch = real
+    obj_id = owner.catalog.get("late")[0]
+    assert provs["C"].dht.lookup(obj_id).version < owner.row_for(obj_id).version      # C holds the old row
+    assert owner.resend("C") and owner.behind == set()
+    assert provs["C"].dht.lookup(obj_id) == owner.row_for(obj_id)
+    provs["C"].receive_batch = lambda rows, digest=None: (_ for _ in ()).throw(TimeoutError("down"))
+    owner.upload("later", b"y", "image")                                             # a node down is noted, not fatal
+    assert owner.behind == {"C"}
