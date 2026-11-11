@@ -19,10 +19,15 @@ reads in ten into the lowest fraction F of each type's identifier range, a
 hot range the policy can see.  The Policy Manager runs --rounds policy rounds
 with the values of Table II, and each round is timed with its orders out
 together.  With
-providers started in --debug mode it also damages one object, names it, and
-moves the damaged provider's trees away.  The owner sends each new row to
-all DHT nodes at once (--sequential: one after another).  Results go to
-results/net.csv.
+providers started in --debug mode it also damages one object, names it,
+localizes it by Phase 6 and by fetching every leaf hash (the Wang baseline),
+and moves the damaged provider's trees away.  The owner sends each new row to
+all DHT nodes at once (--sequential: one after another).  --single runs the
+single-tree layout of Wang et al. end to end instead: one tree over all
+objects at provider A and no policy, through the same loading, read, audit
+and fault steps (the owner still checks writes with Algorithm 3; the cost of
+Wang's own path-update check is in bench.py).
+Results go to results/net.csv (--out).
 """
 import argparse
 import csv
@@ -37,6 +42,7 @@ from amf.owner.localize import Localizer
 from amf.owner import Owner, ReadFault
 from amf.owner.policy import PolicyManager
 from amf.provider.client import RemoteError, RemoteProvider
+from baselines import amf_static, wang2011
 
 TYPES = (("image", 1, "A"), ("video", 2, "B"), ("document", 3, "C"))
 
@@ -127,6 +133,8 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--sequential", action="store_true",
                     help="send to the DHT nodes one at a time instead of all at once")
+    ap.add_argument("--single", action="store_true",
+                    help="the single-tree layout of Wang et al.: one tree over all objects at A, no policy")
     ap.add_argument("--out", default="results/net.csv")
     args = ap.parse_args()
     spec = args.provider or [f"{n}=http://127.0.0.1:{8001 + k}" for k, n in enumerate("ABC")]
@@ -147,18 +155,21 @@ def main():
 
     m = Meter(list(provs.values()))
     owner = Owner(s=8, rng=random.Random(args.seed), parallel=not args.sequential)
-    pm = PolicyManager(owner, upper=args.upper, lower=args.lower)
-    print(f"\nsteps (owner here, {args.files} objects of {args.object_bytes} B, N_up {args.upper}, N_low {args.lower}, "
-          f"DHT nodes {'one at a time' if args.sequential else 'all at once'})")
+    types = (("all", 1, "A"),) if args.single else TYPES
+    pm = amf_static.no_policy(owner) if args.single else PolicyManager(owner, upper=args.upper, lower=args.lower)
+    print(f"\nsteps (owner here, {args.files} objects of {args.object_bytes} B, "
+          + ("single tree at A, no policy (the layout of Wang et al.), " if args.single
+             else f"N_up {args.upper}, N_low {args.lower}, ")
+          + f"DHT nodes {'one at a time' if args.sequential else 'all at once'})")
 
     def setup():
         for p in provs.values():
             owner.register_provider(p)
-        for ftype, tag, prov in TYPES:
+        for ftype, tag, prov in types:
             owner.add_type(ftype, tag, prov)
-    m.run("Phase 1: register, open 3 trees", setup)
+    m.run(f"Phase 1: register, open {len(types)} tree(s)", setup)
 
-    names = [f"{TYPES[i % 3][0]}-{i}" for i in range(args.files)]
+    names = [f"{types[i % len(types)][0]}-{i}" for i in range(args.files)]
     files = [(n, rnd.randbytes(args.object_bytes), n.split("-")[0]) for n in names]
     if args.batch > 0:
         for at in range(0, len(files), args.batch):
@@ -170,7 +181,7 @@ def main():
     print(f"    forest: {len(live)} trees, {min(r.count for r in live)}-{max(r.count for r in live)} leaves, "
           f"{owner.hashes} owner hashes for every check so far")
 
-    extra = [(f"extra-{i}", rnd.randbytes(args.object_bytes), TYPES[i % 3][0]) for i in range(20)]
+    extra = [(f"extra-{i}", rnd.randbytes(args.object_bytes), types[i % len(types)][0]) for i in range(20)]
     m.run("Phase 2: upload one object", lambda: owner.upload(*extra.pop()), repeat=20)
     pick = locality_picker(owner, names, args.locality, rnd) if args.locality else zipf_picker(names, args.zipf, rnd)
     workload = f"hot range {args.locality:g}" if args.locality else f"Zipf {args.zipf:g}"
@@ -188,44 +199,53 @@ def main():
     print(f"    rows recompute to D: {audit.digest_ok}; trees ok: {sum(t.ok for t in audit.trees)}/{len(audit.trees)}")
 
     m.run(f"Phase 3: {args.reads} reads, {workload}", lambda: [owner.read(pick()) for _ in range(args.reads)])
-    for k in range(args.rounds):
-        done = m.run(f"Phase 4: policy round {k + 1}", pm.tick)
-        print(f"    decisions: {[(d.kind, d.reason) for d in done] or 'none'}")
-    live = owner.live_rows()
-    print(f"    forest: {len(live)} trees, {min(r.count for r in live)}-{max(r.count for r in live)} leaves")
+    if pm is None:
+        print("    (single tree: no policy rounds, no split, merge or migration)")
+    else:
+        for k in range(args.rounds):
+            done = m.run(f"Phase 4: policy round {k + 1}", pm.tick)
+            print(f"    decisions: {[(d.kind, d.reason) for d in done] or 'none'}")
+        live = owner.live_rows()
+        print(f"    forest: {len(live)} trees, {min(r.count for r in live)}-{max(r.count for r in live)} leaves")
 
-    image = max((r for r in live if r.provider == "A"), key=lambda r: r.count)
-    h0, d0 = owner.hashes, owner.digest_hashes
-    a, b, _ = m.run("Phase 4: split at the median", lambda: owner.split(image.tree_id))
-    h1 = owner.hashes
-    ab = m.run("Phase 4: merge the halves back", lambda: owner.merge(a.tree_id, b.tree_id))
-    print(f"    owner hashes for the checks: split {h1 - h0}, merge {owner.hashes - h1} (Algorithm 3, lines 5-6); "
-          f"for D: {owner.digest_hashes - d0}; root unchanged: {ab.root == image.root}")
-    moved = m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
-    later = Auditor([owner.pk], s=8).audit_tree(moved, plist)
-    print(f"    a later audit of B passes: {later.ok}; only then is A told to release")
-    if later.ok:
-        m.run("Phase 4: release the copy at A", lambda: owner.release(ab.tree_id, "A"))
+        image = max((r for r in live if r.provider == "A"), key=lambda r: r.count)
+        h0, d0 = owner.hashes, owner.digest_hashes
+        a, b, _ = m.run("Phase 4: split at the median", lambda: owner.split(image.tree_id))
+        h1 = owner.hashes
+        ab = m.run("Phase 4: merge the halves back", lambda: owner.merge(a.tree_id, b.tree_id))
+        print(f"    owner hashes for the checks: split {h1 - h0}, merge {owner.hashes - h1} (Algorithm 3, lines 5-6); "
+              f"for D: {owner.digest_hashes - d0}; root unchanged: {ab.root == image.root}")
+        moved = m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
+        later = Auditor([owner.pk], s=8).audit_tree(moved, plist)
+        print(f"    a later audit of B passes: {later.ok}; only then is A told to release")
+        if later.ok:
+            m.run("Phase 4: release the copy at A", lambda: owner.release(ab.tree_id, "A"))
 
     if debug:
-        video = max((r for r in owner.live_rows() if r.provider == "B" and r.count >= 2), key=lambda r: r.count)
-        victim = owner.catalog.id_at(video.lo, video.count // 2)
+        at = "A" if pm is None else "B"
+        tree = max((r for r in owner.live_rows() if r.provider == at and r.count >= 2), key=lambda r: r.count)
+        victim = owner.catalog.id_at(tree.lo, tree.count // 2)
         name = owner.catalog.name_of(victim)
-        provs["B"].corrupt(victim, 9)
+        provs[at].corrupt(victim, 9)
         try:
             owner.read(name)
         except ReadFault as e:
-            print(f"    fault injected at B: read of {name} -> {e.kind} at position {e.position}")
-        rep = m.run("Phase 6: localize (rounds)", lambda: Localizer(owner).localize(video.tree_id))
+            print(f"    fault injected at {at}: read of {name} -> {e.kind} at position {e.position}")
+        rep = m.run("Phase 6: localize (rounds)", lambda: Localizer(owner).localize(tree.tree_id))
         print(f"    verdict {rep.verdict}: {rep.names} after {rep.rounds} rounds, {rep.bytes_received} B")
-        m.run("Phase 6: localize (one exchange)", lambda: Localizer(owner).localize(video.tree_id, True))
+        m.run("Phase 6: localize (one exchange)", lambda: Localizer(owner).localize(tree.tree_id, True))
         m.run("Phase 6: recount of the whole forest", lambda: Localizer(owner).recount_forest())
-        moved = m.run("Phase 4: failed check -> repair, migrate",
-                      lambda: pm.failed_check("B", [video.tree_id], repairs={name: (b"repaired copy", "video")}))
-        for row in moved:
-            if Auditor([owner.pk], s=8).audit_tree(row, plist).ok:
-                owner.release(row.tree_id, "B")
-        print(f"    moved {len(moved)} tree(s) away from B: {[r.provider for r in moved]}")
+        found, nbytes = m.run("Phase 6: fetch all leaf hashes (Wang)",
+                              lambda: wang2011.fetch_all(provs[at], owner.own, tree.tree_id,
+                                                         owner.catalog.leaves_in(tree.lo, tree.hi)))
+        print(f"    fetch-all names positions {found} after {nbytes:,} B of leaf hashes")
+        if pm is not None:
+            moved = m.run("Phase 4: failed check -> repair, migrate",
+                          lambda: pm.failed_check(at, [tree.tree_id], repairs={name: (b"repaired copy", "video")}))
+            for row in moved:
+                if Auditor([owner.pk], s=8).audit_tree(row, plist).ok:
+                    owner.release(row.tree_id, at)
+            print(f"    moved {len(moved)} tree(s) away from {at}: {[r.provider for r in moved]}")
     else:
         print("    (providers not in --debug: fault injection skipped)")
 

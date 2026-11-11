@@ -4,14 +4,16 @@ The same forest of N objects (trees of at most 3/4 N_up, as in bench.py) is
 driven by the same sequence of accesses under two configurations:
 
   static   a forest with the same size bounds that never restructures
+           (baselines/amf_static.py)
   AMF      the Policy Manager of Phase 4 with the values of Table II, one
            policy round after every --per-round accesses
 
 and, for reference, one tree over all N objects, computed rather than run
 (every access lands in that one tree, so its costs follow from N alone):
 with the owner's check of Algorithm 3 (n - 1 hashes, the provider rebuilds
-all n leaves), and with a path update as in Wang et al. (2 log2 N hashes at
-the verifier, log2 N at the provider).
+all n leaves; amf_static.one_tree_costs), and with a path update as in Wang
+et al. (2 log2 N hashes at the verifier, log2 N at the provider;
+baselines/wang2011.py).
 
 An access is a read or, with probability --writes, a rewrite of an existing
 object.  Objects are ranked by a Zipf law of exponent a (a = 0 is uniform);
@@ -31,10 +33,11 @@ import random
 import time
 
 from bench import Clock, World
-from amf.common.merkle import depth_of, sides_of
+from amf.common.merkle import sides_of
 from amf.owner import Owner
 from amf.owner.policy import PolicyManager
 from amf.provider import Provider
+from baselines import amf_static, wang2011
 
 WORKLOADS = {                       # name: (Zipf exponent, share of writes)
     "uniform, 10% writes": (0.0, 0.1),
@@ -78,7 +81,7 @@ def accesses(n, a, writes, total, seed):
 def run(config, args, seq):
     w = TraceWorld(args.n, args.object_bytes, args.upper, args.s, args.seed)
     o = w.owner
-    pm = PolicyManager(o) if config == "AMF" else None    # Table II: 1000, 250, 4, 50, 3
+    pm = PolicyManager(o) if config == "AMF" else amf_static.no_policy(o)    # Table II: 1000, 250, 4, 50, 3
     names = {k: (f"{w.types[k % 3]}-{k}", w.types[k % 3]) for k in range(args.n)}
     tot = dict(owner_hashes=0, provider_leaves=0, read_path=0, reads=0, writes=0,
                owner_ms=0.0, provider_ms=0.0, splits=0, merges=0)
@@ -119,19 +122,6 @@ def run(config, args, seq):
     return tot
 
 
-def single_tree(n, seq, wang):
-    """One tree over all n objects: every access lands in it, so its costs follow from n."""
-    reads = sum(1 for _, wr in seq if not wr)
-    writes = len(seq) - reads
-    d = depth_of(n)
-    if wang:                                              # verify the old path, compute the new root
-        owner, prov = writes * 2 * d, writes * d
-    else:                                                 # Algorithm 3 on one tree of n leaves
-        owner, prov = writes * (n - 1), writes * n
-    return dict(owner_hashes=owner, provider_leaves=prov, read_path=reads * d, reads=reads, writes=writes,
-                owner_ms=None, provider_ms=None, splits=0, merges=0, trees=1, mean_tree=n)
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n", type=int, default=10000)
@@ -147,9 +137,10 @@ def main():
     out, summary = [], []
     for wl, (a, writes) in WORKLOADS.items():
         seq = accesses(args.n, a, writes, args.accesses, args.seed)
+        reads = sum(1 for _, wr in seq if not wr)
         res = {"never restructures": run("static", args, seq), "AMF": run("AMF", args, seq),
-               "one tree, Algorithm 3": single_tree(args.n, seq, wang=False),
-               "one tree, path update": single_tree(args.n, seq, wang=True)}
+               "one tree, Algorithm 3": amf_static.one_tree_costs(args.n, reads, len(seq) - reads),
+               "one tree, path update": wang2011.access_costs(args.n, reads, len(seq) - reads)}
         show(wl, args, res)
         summary.append((wl, res["never restructures"], res["AMF"]))
         for config, t in res.items():

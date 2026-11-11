@@ -11,22 +11,25 @@ an upload, a split, a merge, a migration, an audit and a localization:
   bytes        what the owner or reader receives to check the operation
                (an announcement is tid 16 + lo 66 + hi 66 + root 32 + count 8)
 
-and the same for the baselines:
+and the same for the baselines of the baselines/ package (one module per
+paper, each saying what it takes from it and what it leaves out):
 
-  single tree  one Merkle tree over all N objects (Wang et al.): read path,
-               provider rebuild per write, localization depth, and a rewrite
-               checked the Wang way (old path, new root: 2 log2 N hashes)
-  rebuild      a reshaping without a check (traffic-aware trees, HMT): the
-               verifier downloads the tree and rebuilds the new roots itself
-  fetch-all    localization by fetching every leaf hash of the tree
-  re-challenge localization by challenging halves (Zhu et al., CPDP): rounds
-               and blocks the provider must touch, counted, not timed
+  single tree  one Merkle tree over all N objects (baselines/wang2011.py):
+               read path, provider rebuild per write, and a rewrite checked
+               the Wang way (old path, new root: 2 log2 N hashes)
+  rebuild      a reshaping without a check (baselines/mizrahi2024.py, also
+               HMT): the verifier downloads the tree and rebuilds the roots
+  fetch-all    localization by fetching every leaf hash (wang2011.fetch_all)
+  re-challenge localization by challenging halves (baselines/zhu2012.py,
+               CPDP): the re-challenges and the blocks the provider touches,
+               run on AMF's challenge call and counted
 
-Timed here: every AMF operation (owner and provider sides) and the rebuild
-baseline.  Counted, not timed: the single-tree read path and localization
-depth, fetch-all bytes, and the re-challenge rounds and blocks, which follow
-from N alone.  The merge timed here joins two neighbors as they are, whatever
-their sizes; Table II's rule would only merge two that sum to under N_low.
+Timed here: every AMF operation (owner and provider sides), the rebuild
+baseline, the Wang check and fetch-all.  Counted, not timed: the single-tree
+read path and localization depth, and the re-challenge rounds and blocks
+(CPDP's tags are not implemented).  The merge timed here joins two neighbors
+as they are, whatever their sizes; Table II's rule would only merge two that
+sum to under N_low.
 
 The forest is built in bulk (the owner computes every root from its catalog,
 signs the rows, the providers promote the trees); the encrypted catalog copy
@@ -45,9 +48,11 @@ from amf.owner.catalog import TYPES_KEY, Catalog
 from amf.common.index import (BOUND_LEN, ROW_DOMAIN, SIG_LEN, TREE_ID_LEN, IndexRow, id_to_int, new_tree_id,
                        tag_range)
 from amf.owner.localize import Localizer
-from amf.common.merkle import depth_of, node_hash, root_of, sides_of
+from amf.common.merkle import depth_of, root_of
+from amf.common.merkle import verify_path
 from amf.owner import Owner
 from amf.provider import Pending, Provider, TreeState
+from baselines import mizrahi2024, wang2011, zhu2012
 
 ANNOUNCE = TREE_ID_LEN + 2 * BOUND_LEN + 32 + 8
 PROVIDER_CALLS = ("write", "delete", "decompose", "compose", "export_tree", "import_from", "pending_challenge",
@@ -162,14 +167,6 @@ def med(xs):
     return statistics.median(xs) if xs else 0.0
 
 
-def root_from_path(n, i, leaf, path):
-    """The root a leaf and its path lead to (what a Wang-style verifier computes)."""
-    h = leaf
-    for sibling, side in zip(path, reversed(sides_of(n, i))):
-        h = node_hash(h, sibling) if side == "L" else node_hash(sibling, h)
-    return h
-
-
 # ---- AMF ----------------------------------------------------------------------------
 
 def bench_amf(w, reps, s):
@@ -217,8 +214,10 @@ def bench_amf(w, reps, s):
         sm.append(om), sp.append(pm), sh.append(h), sd.append(o.digest_hashes - d0)
         ab, om, pm, h = w.run(lambda: o.merge(a.tree_id, b.tree_id))
         mm.append(om), mp.append(pm), mh.append(h)
-        rb_ms.append(rebuild_at_verifier(w, ab, split_at=a.count))
-        rb_bytes.append(ab.count * (crypto.ID_LEN + w.ct_len()))
+        t = w.provs[ab.provider].live[ab.key]
+        r_a, r_b, ms, nbytes = mizrahi2024.rebuild_at_verifier(t.ids, w.provs[ab.provider].objects, a.count)
+        assert (r_a, r_b) == (a.root, b.root)
+        rb_ms.append(ms), rb_bytes.append(nbytes)
     out.update(split_median_owner_ms=med(sm), split_median_provider_ms=med(sp), split_median_hashes=med(sh),
                split_d_hashes=med(sd), split_bytes=2 * ANNOUNCE,
                merge_equal_owner_ms=med(mm), merge_equal_provider_ms=med(mp), merge_equal_hashes=med(mh),
@@ -263,16 +262,6 @@ def bench_amf(w, reps, s):
     return out
 
 
-def rebuild_at_verifier(w, row, split_at):
-    """A verifier without leaf hashes downloads the tree and rebuilds the two roots of a split."""
-    t = w.provs[row.provider].live[row.key]
-    objects = w.provs[row.provider].objects
-    t0 = time.perf_counter()
-    leaves = [crypto.leaf_hash(i, objects[i]) for i in t.ids]
-    root_of(leaves[:split_at]), root_of(leaves[split_at:])
-    return 1000 * (time.perf_counter() - t0)
-
-
 def bench_localize(w, reps):
     o, loc = w.owner, Localizer(w.owner)
     r_ms, r_pm, rounds, hashes, by, e_ms, e_h, e_b, fa_ms, fa_b, rc_rounds, rc_blocks = ([] for _ in range(12))
@@ -288,11 +277,20 @@ def bench_localize(w, reps):
         by.append(rep.bytes_received)
         one, om, _, _ = w.run(lambda: loc.localize(row.tree_id, one_exchange=True))
         e_ms.append(om), e_h.append(one.owner_hashes), e_b.append(one.bytes_received)
-        found, om, _, _ = w.run(lambda: loc.recount(row.tree_id))           # fetch every leaf hash
+        (found, nbytes), om, _, _ = w.run(                                   # the owner's leaves come from its catalog
+            lambda: wang2011.fetch_all(prov, o.own, row.tree_id, o.catalog.leaves_in(row.lo, row.hi)))
         assert found == [pos]
-        fa_ms.append(om), fa_b.append(32 * row.count)
-        rc_rounds.append(depth_of(row.count))                                # re-challenge by halves
-        rc_blocks.append(row.count + sum(-(-row.count // 2 ** k) for k in range(1, depth_of(row.count) + 1)))
+        fa_ms.append(om), fa_b.append(nbytes)
+
+        def check_range(lo, hi):                                             # one CPDP-style challenge
+            for i, obj_id, ct, _, path in prov.challenge(o.own, row.tree_id, range(lo, hi)):
+                if ct is None or not verify_path(row.root, row.count, i, crypto.leaf_hash(obj_id, ct), path):
+                    return False
+            return True
+        where, rounds_, blocks = zhu2012.localize(check_range, row.count)
+        d = depth_of(row.count)                                              # a leaf's path is d or d - 1 long
+        assert where == pos and d - 1 <= rounds_ <= d and blocks <= zhu2012.expected(row.count)[1]
+        rc_rounds.append(rounds_), rc_blocks.append(blocks)
         prov.corrupt(victim, at=20)                                          # flip the byte back
     return dict(localize_owner_ms=med(r_ms), localize_provider_ms=med(r_pm), localize_rounds=med(rounds),
                 localize_hashes=med(hashes), localize_bytes=med(by), one_exchange_owner_ms=med(e_ms),
@@ -306,19 +304,19 @@ def bench_single(w, reps):
     o, out = w.owner, {}
     (row,) = o.live_rows()
     t = w.provs[row.provider].live[row.key]
-    out["single_depth"] = depth_of(row.count)
-    out["single_read_proof_bytes"] = 32 * depth_of(row.count) + 32
+    out["single_depth"] = wang2011.depth(row.count)
+    out["single_read_proof_bytes"] = wang2011.proof_bytes(row.count)
     # a rewrite checked the Wang way: the old leaf and path give the old root, the new leaf the new root
     wm, wh = [], []
     for _ in range(reps):
         i = w.rnd.randrange(row.count)
         old, path = t.leaves[i], t.tree.path(i)
         new = crypto.leaf_hash(t.ids[i], w.rnd.randbytes(w.ct_len()))
+        check = wang2011.PathUpdate()
         t0 = time.perf_counter()
-        assert root_from_path(row.count, i, old, path) == row.root
-        root_from_path(row.count, i, new, path)
+        check.check(row.root, row.count, i, old, new, path)
         wm.append(1000 * (time.perf_counter() - t0))
-        wh.append(2 * len(path))
+        wh.append(check.hashes)
     out.update(single_rewrite_check_ms=med(wm), single_rewrite_check_hashes=med(wh))
     # the same rewrite in a tree of the canonical shape: the provider rebuilds all N leaves
     pm_, om_ = [], []
@@ -328,7 +326,7 @@ def bench_single(w, reps):
         pm_.append(pm), om_.append(om)
     out.update(single_write_provider_ms=med(pm_), single_write_owner_ms=med(om_))
     out["single_localize_rounds"] = depth_of(row.count)
-    out["single_fetch_all_bytes"] = 32 * row.count
+    out["single_fetch_all_bytes"] = wang2011.fetch_all_bytes(row.count)
     return out
 
 

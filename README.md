@@ -14,6 +14,7 @@ The code under `amf/` has one folder per party of the system model (Fig. 1).
 | `amf/owner/` | `owner` Key/Signing and Verification Manager (Algorithm 3); `catalog` the owner's books (B+ tree on id); `policy` Policy Manager (Algorithm 2); `localize` fault localization (Algorithm 5) | III-A 1, Phases 2–4 and 6 |
 | `amf/provider/` | `service` Storage Service (Proof Engine, Shadow Area, Migrate Pipe, DHT node); `store` objects on disk; `server` the service over HTTP; `client` a provider seen over HTTP | III-A 3 |
 | `amf/auditor/` | `auditor` the auditor and the data user (Algorithms 1 and 4) | III-A 2, Phases 3 and 5 |
+| `baselines/` | the baselines of Section V, one module per paper, built from the same primitives: `wang2011` one Merkle tree per owner (path proofs, the path-update check, fetch-all); `zhu2012` localization by re-challenging halves (CPDP); `mizrahi2024` a reshaping without a check, rebuilt at the verifier (traffic-aware trees, HMT); `amf_static` AMF with the policy off | Section V |
 | `tests/` | one test file per module | |
 
 ## Setup
@@ -29,11 +30,11 @@ python -m pytest -q
 
 | Script | What it does | Output |
 |---|---|---|
-| `demo.py` | the five phases on one machine, step by step | screen |
-| `bench.py` | cost of each operation for 10^3 to 10^5 objects, with the baselines of Section V | `results/bench.csv` |
-| `workload.py` | AMF against a forest that never restructures, under uniform and Zipf access | `results/workload.csv` |
+| `demo.py` | the six phases on one machine, step by step | screen |
+| `bench.py` | cost of each operation for 10^3 to 10^5 objects, beside the baselines of `baselines/` | `results/bench.csv` |
+| `workload.py` | AMF against the forest that never restructures and against one tree, under uniform and Zipf access | `results/workload.csv` |
 | `owners.py` | 1 to 10,000 owners sharing three providers: one owner's upload, read and audit, and a DHT lookup, as the number of owners grows | `results/owners.csv` |
-| `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP: batch loading, skewed reads, policy rounds, a fault and its localization | `results/net.csv` |
+| `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP: batch loading, skewed reads, policy rounds, a fault and its localization (`--single`: the same run on one tree over all objects, the layout of Wang et al.) | `results/net.csv` |
 | `faults.py` | one injected fault per guarantee of Section IV, and the check that catches it | `results/faults.csv` |
 
 Three providers in Docker on one machine:
@@ -59,6 +60,10 @@ checked by the owner as one write); `--batch 0` writes them one at a time.
 nine reads in ten into the lowest fraction F of each type's identifier range,
 and `--rounds` policy rounds follow. `--sequential` sends each new index row
 to the DHT nodes one at a time instead of all at once, for comparison.
+Three runs make the end-to-end comparison of Section V, each against freshly
+started providers: AMF as above; the same with `--rounds 0 --upper 1000000`
+(the forest that never restructures); and `--single` (one tree over all
+objects at A, no policy).
 
 ## Limits of the prototype
 
