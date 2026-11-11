@@ -22,21 +22,28 @@ with an overflow tree, the global root, the CMS with conservative update, the
 capacity-bounded promotion cache and the Ratio-Based policy.  Left out: the
 Sliding-Window and Dynamic-Control policies, the bucketed LRU details of the
 cache (candidates are ranked by their CMS estimate directly) and BLAKE3 (the
-CMS rows are derived from SHA-256).  The cold tier and the overflow tree are
-binary hash tries keyed by the element's identifier (each key sits at the
-first depth at which it is alone, as in a binary trie such as Ethereum's
-UBT), which gives the logarithmic insert, delete and update paths the paper
-asks of the cold tier.  Hashing is AMF's (SHA-256, the same leaf and node
+CMS rows are derived from SHA-256).  The paper's cold tier is "a balanced
+binary MT"; here the cold tier and the overflow tree are binary hash tries
+keyed by a 32-byte hash of the element (each key sits at the first depth at
+which it is alone, as in a binary trie such as Ethereum's UBT), which gives
+the logarithmic insert, delete and update paths the paper asks of the cold
+tier at the price of paths about one hash longer than a balanced tree's
+(mean 12.3 at n = 2,000 against ceil(log2 n) = 11).  The keys must be
+uniform: AMF identifiers share their first 33 bytes, so workload.py keys the
+tries by SHA-256 values, not by AMF identifiers.  Hashing is AMF's (SHA-256, the same leaf and node
 encodings), so the two schemes differ only in layout and in who can check
 what.
 
 What the comparison measures, per access and on the same stream as AMF, all
-by running the code and counting its hash evaluations: hashes at the
-maintainer (the provider: dirty paths, tier moves, rebuilds), hashes at a
-Verifier that checks reads by their proof and rewrites by the path update
-(Wang's way) and TRUSTS the layout changes, hashes at a Verifier that instead
-recomputes the tiers whose root changed (nothing in HMT lets it check a
-rebuild or a tier move otherwise), and the proof length of a read.
+by running the code and counting its hash evaluations (the paper counts hashed
+bytes; one evaluation here hashes 65 bytes): hashes at the maintainer (the
+provider: dirty paths, tier moves, rebuilds), hashes at a Verifier that checks
+reads by their proof and rewrites by the path update (Wang's way, not in HMT)
+and TRUSTS the layout changes, which is the paper's model (a client checks
+proofs against committed roots), hashes at a Verifier of our own that instead
+recomputes from their leaves the tiers whose root changed (Algorithm 3 gives a
+verifier no proof for a tier move or a rebuild), and the proof length of a
+read in hashes (the paper's weighted proof size, in hashes rather than bytes).
 """
 import hashlib
 import heapq
@@ -440,10 +447,12 @@ class HMT:
         """What a proof carries beside the path: the tier roots (Algorithm 3, GetProof)."""
         return (self.cold.root_hash, self.base.root_hash, self.overflow.root_hash, self.overflow.size > 0)
 
-    def read(self, key) -> tuple:
+    def read(self, key, track: bool = True) -> tuple:
         """(proof as (side, sibling) list, tier, tier roots) for a verifier holding the global root;
-        the proof length is what Sec. 6 calls the membership-proof size."""
-        self._track(key)
+        the proof length is what Sec. 6 calls the membership-proof size.  track=False takes the proof
+        without counting an access (a rewrite checked on its path is counted once, by write)."""
+        if track:
+            self._track(key)
         tier = self.tier_of(key)
         proof = {"cold": self.cold.proof, "base": self.base.proof, "overflow": self.overflow.proof}[tier](key)
         return proof, tier, self.roots()
@@ -497,6 +506,7 @@ class HMT:
             self._promote(key)
             promoted += 1
             demoted += 1
+            break                                       # Algorithm 5, step 2: one swap per period
         rebuilt = False
         if self.periods % self.rebuild_every == 0 and (self.overflow.size or promoted or demoted):
             self._rebuild()
@@ -592,14 +602,19 @@ class Verifier:
         """A tier move or a rebuild: nothing to check, the verifier takes the announced root."""
         self.global_root = new_global_root
 
-    def rebuild_layout(self, hmt: "HMT") -> None:
-        """The same, for a verifier that will not trust it: recompute every tier from its leaves
-        (it must hold or fetch all leaf values), then the roots."""
+    def rebuild_layout(self, hmt: "HMT", held: tuple | None = None) -> None:
+        """The same, for a verifier that will not trust it: recompute from its leaves every tier whose
+        announced root is not the one it held (held: the tier roots it had, None = all; it must hold or
+        fetch all leaf values of those tiers), then the roots."""
         c = self.count
-        cold = BinaryTrie.build(c, hmt.cold.keys())
-        values = dict(hmt.base.items())
-        base = HuffMHT(c, [(k, values[k], w) for k, w in hmt.base.built_with])   # the published weights
-        overflow = BinaryTrie.build(c, hmt.overflow.keys())
-        self.global_root = c.tier(GLOBAL_PREFIX, cold.root_hash,
-                                  hot_root_from(base.root_hash, overflow.root_hash, overflow.size > 0, c))
+        cold, base_r, overflow_r, nonempty = hmt.roots()
+        had = held or (None, None, None, None)
+        if cold != had[0]:
+            cold = BinaryTrie.build(c, hmt.cold.keys()).root_hash
+        if base_r != had[1]:
+            values = dict(hmt.base.items())
+            base_r = HuffMHT(c, [(k, values[k], w) for k, w in hmt.base.built_with]).root_hash   # the published weights
+        if overflow_r != had[2]:
+            overflow_r = BinaryTrie.build(c, hmt.overflow.keys()).root_hash
+        self.global_root = c.tier(GLOBAL_PREFIX, cold, hot_root_from(base_r, overflow_r, nonempty, c))
         assert self.global_root == hmt.global_root

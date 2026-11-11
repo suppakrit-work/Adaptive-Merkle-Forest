@@ -9,7 +9,11 @@ as access patterns change: Huffman-shaped layouts, rebuilt or swapped at
 milestones from observed frequencies.  The party that reshapes publishes the
 new root.  Nothing in these schemes lets a verifier that holds only the old
 root check the new one cheaply; the restructuring is trusted, or the verifier
-downloads the elements and rebuilds the root itself.
+downloads the elements and rebuilds the root itself.  In Mizrahi et al. that
+is the design: every node recomputes the tree from the shared transaction
+history, so rebuilding is their own verifier model, not a fallback; the
+canonical shape built here is cheaper to build than their Huffman or
+partition layouts, so the figures are a lower bound on that cost.
 
 This module measures that second option for the restructuring that AMF
 checks with one hash, a split at the median: the time to compute the two new

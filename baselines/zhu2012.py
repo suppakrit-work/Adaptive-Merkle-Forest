@@ -5,9 +5,13 @@ Integrity Verification in Multicloud Storage", IEEE Trans. Parallel Distrib.
 Syst. 23(12), 2012, verify a file spread over several clouds with homomorphic
 tags and one aggregated response per challenge.  A response that fails says
 nothing about which block is bad, and the aggregation hides the block's
-location on purpose.  Section 5.2 of the paper proposes to find it anyway: take
-a part of the challenged indexes as a new challenge, halve it each time, until
-the bad block is found, in O(log n) challenges.
+location on purpose.  Section 5.2 of the paper says, in one paragraph, that the
+block can be found anyway: take "the partial set of challenge indexes as a new
+challenge set" and repeat "until the bad block is found", in O(log n) steps.
+The paper fixes neither the part taken nor the starting set (its challenge is a
+random sample of t = n*w blocks); halving, the first half of ceil(size/2)
+blocks, and starting from the whole tree of n blocks are our concretization of
+that paragraph, the one that gives its O(log n).
 
 This module runs that search on AMF's trees.  A challenge covers a range of
 positions; the provider answers for every position in it (AMF's challenge call

@@ -8,13 +8,18 @@ authentication path.  An update is checked in two steps on the same path:
 the old block and its path must lead to the root the verifier holds, then the
 new root is computed from the new block along that path -- 2 log2 N hashes at
 the verifier, log2 N at the server, whatever N is.  The scheme has no fault
-localization: a failed proof says only that the tree is bad, and a verifier
-that wants to know which block must fetch every leaf hash (fetch-all).
+localization: a failed proof says only that the tree is bad.  fetch-all, a
+verifier that fetches every leaf hash to find the block, is our construction
+of the cheapest thing the scheme allows, not something the paper proposes.
 
-Taken from the paper: the single tree, the path proof, the path-update
-check, and fetch-all as the only way to a bad block.  Left out: the BLS tags
-on the blocks and the third-party auditor's public audits, which do not
-change the tree, its proofs or its updates.  The tree is AMF's Merkle tree
+Taken from the paper: the single tree, the path proof and the path-update
+check.  Left out: the BLS tags on the blocks and the third-party auditor's
+public audits, which do not change the tree, its proofs or its updates; the
+client's pairing check of the signature on the old root (our verifier holds
+the root, the paper's client does not), its signature on the new root, and
+the challenge of c random blocks the paper's client runs after every update
+(Table 2), a possession check that AMF makes in audits, not on writes -- all
+of which make the paper's client dearer than counted here.  The tree is AMF's Merkle tree
 (amf.common.merkle), so both schemes hash the same bytes with the same
 function; they differ in the number of trees and in how a change is checked
 (AMF: Algorithm 3 against the owner's catalog; here: along the path).

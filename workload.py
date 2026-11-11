@@ -16,12 +16,19 @@ N hashes at the verifier, log2 N at the provider; baselines/wang2011.py).
 
 HMT, the frequency-aware tiered tree of Shangguan et al. (baselines/
 shangguan2026.py), runs on the same sequence as a fifth configuration: the
-same N objects as leaves, a period every --hmt-period accesses, the hot
-tier rebuilt every 5 periods.  Its "owner hashes" are what a verifier spends
-checking reads by their proof and rewrites by the path update while trusting
-every layout change (HMT, layout trusted), or recomputing the tiers whose
-root changed (HMT, layout rebuilt); its provider column is the hashes of
-the maintainer; read path is the access-weighted proof length.
+same number N of leaves (random 32-byte values under uniform 32-byte keys,
+since its tries need uniform keys; the hash counts do not depend on the
+values), a period every --hmt-period accesses standing for a block, theta =
+0.5 accesses per period, a hot tier of N/10 and N/5 candidates, the hot tier
+rebuilt every 5 periods (the paper's evaluation uses theta = 0.05, caches of
+8,000/16,000 and a rebuild every 500 blocks; with B = 1 the Ratio-Based
+test admits any key accessed once in the first period, the paper's
+policy).  Its "owner hashes" are what a verifier spends checking rewrites by
+the path update while trusting every layout change (HMT, layout trusted), or
+recomputing the tiers whose root changed (HMT, layout rebuilt); read checks
+are left out of every row's owner hashes (Owner.read counts none) and show
+in the read-path column; its provider column is the hashes of the
+maintainer; read path is the access-weighted proof length.
 
 An access is a read or, with probability --writes, a rewrite of an existing
 object.  Objects are ranked by a Zipf law of exponent a (a = 0 is uniform);
@@ -94,6 +101,9 @@ def run(config, args, seq):
     names = {k: (f"{w.types[k % 3]}-{k}", w.types[k % 3]) for k in range(args.n)}
     tot = dict(owner_hashes=0, provider_leaves=0, read_path=0, reads=0, writes=0,
                owner_ms=0.0, provider_ms=0.0, splits=0, merges=0)
+    for r in o.live_rows():                # the node arrays the owner keeps, built once before the trace (as
+        o._tree_of(r)                      # bench.py does); a split leaves its halves without arrays, so the
+                                           # first rewrite into each rebuilds n_half - 1: a price of restructuring
     o.hashes = o.digest_hashes = 0
     for step, (obj, is_write) in enumerate(seq, start=1):
         name, ftype = names[obj]
@@ -141,14 +151,14 @@ def run_hmt(args, seq):
     h = shangguan2026.HMT(zip(keys, leaves), theta=0.5, hot_capacity=max(1, args.n // 10),
                           candidates=max(1, args.n // 5), rebuild_every=5)
     trusting, rebuilding = shangguan2026.Verifier(h.global_root), shangguan2026.Verifier(h.global_root)
-    m0, ver_ms, mnt_ms = h.maintainer.n, 0.0, 0.0
-    plen = reads = writes = 0
+    m0, ver_ms, mnt_ms, rb_ms = h.maintainer.n, 0.0, 0.0, 0.0
+    plen = reads = writes = read_hashes = 0
     for step, (obj, is_write) in enumerate(seq, start=1):
         k = keys[obj]
         if is_write:
             old, new = leaves[obj], rnd.randbytes(32)
             t0 = time.perf_counter()
-            proof, tier, roots = h.read(k)                       # the path the update is checked on
+            proof, tier, roots = h.read(k, track=False)          # the path the update is checked on; write counts the access
             h.write(k, new)
             mnt_ms += 1000 * (time.perf_counter() - t0)
             t0 = time.perf_counter()
@@ -162,25 +172,29 @@ def run_hmt(args, seq):
             t0 = time.perf_counter()
             proof, tier, roots = h.read(k)
             mnt_ms += 1000 * (time.perf_counter() - t0)
-            t0 = time.perf_counter()
+            t0, h0 = time.perf_counter(), trusting.hashes
             assert trusting.check_read(leaves[obj], proof, tier, roots)
             ver_ms += 1000 * (time.perf_counter() - t0)
+            read_hashes += trusting.hashes - h0      # a read check: in no AMF row (owner.read counts none), so left out here too
             assert rebuilding.check_read(leaves[obj], proof, tier, roots)
             plen += len(proof) + (2 if tier != "cold" and roots[3] else 1)
             reads += 1
         if step % args.hmt_period == 0:
+            held = h.roots()                                    # what the verifiers hold going into the period
             t0 = time.perf_counter()
             r = h.end_of_period()
             mnt_ms += 1000 * (time.perf_counter() - t0)
             if r["changed"]:
                 trusting.trust_layout(h.global_root)
-                rebuilding.rebuild_layout(h)
+                t0 = time.perf_counter()
+                rebuilding.rebuild_layout(h, held)
+                rb_ms += 1000 * (time.perf_counter() - t0)
     sizes = h.tier_sizes()
     base = dict(provider_leaves=h.maintainer.n - m0, read_path=plen, reads=reads, writes=writes,
                 owner_ms=ver_ms, provider_ms=mnt_ms, splits=h.stats["promoted"], merges=h.stats["rebuilds"],
-                trees=2, mean_tree=sizes["base"] + sizes["overflow"])
-    return {"HMT, layout trusted": dict(base, owner_hashes=trusting.hashes),
-            "HMT, layout rebuilt": dict(base, owner_hashes=rebuilding.hashes)}
+                trees=2, mean_tree=sizes["base"] + sizes["overflow"])   # HMT: splits = promotions, merges = rebuilds, mean_tree = hot tier
+    return {"HMT, layout trusted": dict(base, owner_hashes=trusting.hashes - read_hashes),
+            "HMT, layout rebuilt": dict(base, owner_hashes=rebuilding.hashes - read_hashes, owner_ms=ver_ms + rb_ms)}
 
 
 def main():
@@ -240,7 +254,7 @@ def per_access(t, total):
 def show(wl, args, res):
     print(f"\n{wl}: N = {args.n:,}, {args.accesses:,} accesses, a policy round every {args.per_round:,}")
     print(f"  {'per access':24} {'owner hashes':>12} {'prov hashes':>11} {'read path':>9} {'owner ms':>9} "
-          f"{'prov ms':>8} {'splits':>6} {'trees':>5}   (HMT: splits = promotions, trees = tiers)")
+          f"{'prov ms':>8} {'splits':>6} {'trees':>5}   (HMT: splits = promotions, merges = rebuilds, trees = tiers)")
     for config, t in res.items():
         p = per_access(t, args.accesses)
         ms = "" if p["owner_ms"] is None else f"{p['owner_ms']:9.3f} {p['provider_ms']:8.3f}"
