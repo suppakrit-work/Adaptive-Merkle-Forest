@@ -3,7 +3,8 @@
 For forests of N objects (one owner, three providers, three types; each
 type's objects cut into the fewest trees of at most 3/4 N_up leaves, so 333
 per tree at N = 1,000 and about 714 at 10^4 and 10^5) it measures, for a read,
-an upload, a split, a merge, a migration, an audit and a localization:
+an upload of a new object, a rewrite of a stored one, a split, a merge, a
+migration, an audit and a localization:
 
   owner ms     wall time minus the time spent inside provider calls
   provider ms  time inside provider calls (all three DHT nodes included)
@@ -205,6 +206,17 @@ def bench_amf(w, reps, s):
     out.update(upload_owner_ms=med(om_), upload_provider_ms=med(pm_), upload_hashes=med(hs),
                upload_d_hashes=med(dh), upload_bytes=ANNOUNCE)
 
+    # rewrite of an object already stored: the path above its leaf, at both ends
+    om_, pm_, hs = [], [], []
+    for _ in range(reps):
+        row = w.a_tree()
+        name = w.a_name(row)
+        o._tree_of(row)                                       # the owner's nodes of this tree, built once
+        _, om, pm, h = w.run(lambda: o.upload(name, w.rnd.randbytes(w.obj_bytes), name.split("-")[0]))
+        om_.append(om), pm_.append(pm), hs.append(h)
+    out.update(rewrite_owner_ms=med(om_), rewrite_provider_ms=med(pm_), rewrite_hashes=med(hs),
+               rewrite_bytes=ANNOUNCE)
+
     # split at the median and the merge back (two trees of nearly equal size): one hash each
     sm, sp, sh, sd, mm, mp, mh, rb_ms, rb_bytes = [], [], [], [], [], [], [], [], []
     for _ in range(reps):
@@ -318,13 +330,14 @@ def bench_single(w, reps):
         wm.append(1000 * (time.perf_counter() - t0))
         wh.append(check.hashes)
     out.update(single_rewrite_check_ms=med(wm), single_rewrite_check_hashes=med(wh))
-    # the same rewrite in a tree of the canonical shape: the provider rebuilds all N leaves
-    pm_, om_ = [], []
+    # the same rewrite under AMF's check on the one tree: the path at both ends, plus D
+    pm_, om_, hs = [], [], []
+    o._tree_of(row)                                          # the owner's nodes of the tree, built once
     for _ in range(max(1, reps // 4)):
         name = w.a_name(row)
-        _, om, pm, _ = w.run(lambda: o.upload(name, w.rnd.randbytes(w.obj_bytes), "all"))
-        pm_.append(pm), om_.append(om)
-    out.update(single_write_provider_ms=med(pm_), single_write_owner_ms=med(om_))
+        _, om, pm, h = w.run(lambda: o.upload(name, w.rnd.randbytes(w.obj_bytes), "all"))
+        pm_.append(pm), om_.append(om), hs.append(h)
+    out.update(single_write_provider_ms=med(pm_), single_write_owner_ms=med(om_), single_write_hashes=med(hs))
     out["single_localize_rounds"] = depth_of(row.count)
     out["single_fetch_all_bytes"] = wang2011.fetch_all_bytes(row.count)
     return out
@@ -372,7 +385,9 @@ def print_row(r):
         ("read (owner)", r["read_owner_ms"], r["read_provider_ms"], None, r["read_proof_bytes"]),
         ("read (data user, with D)", r["read_user_ms"], r["read_user_provider_ms"], None,
          r["read_user_proof_bytes"]),
-        ("upload", r["upload_owner_ms"], r["upload_provider_ms"], r["upload_hashes"], r["upload_bytes"]),
+        ("upload (new object)", r["upload_owner_ms"], r["upload_provider_ms"], r["upload_hashes"], r["upload_bytes"]),
+        ("rewrite (path update)", r["rewrite_owner_ms"], r["rewrite_provider_ms"], r["rewrite_hashes"],
+         r["rewrite_bytes"]),
         ("split at the median", r["split_median_owner_ms"], r["split_median_provider_ms"],
          r["split_median_hashes"], r["split_bytes"]),
         ("split elsewhere", r["split_other_owner_ms"], r["split_other_provider_ms"], r["split_other_hashes"],
@@ -404,7 +419,7 @@ def print_row(r):
     print(f"  {'single tree: rewrite (Wang)':28} {r['single_rewrite_check_ms']:>9.3f} {'':>9} "
           f"{int(r['single_rewrite_check_hashes']):>7} {'':>9}")
     print(f"  {'single tree: rewrite (ours)':28} {r['single_write_owner_ms']:>9.3f} "
-          f"{r['single_write_provider_ms']:>9.3f} {'':>7} {'':>9}   provider rebuilds all N leaves")
+          f"{r['single_write_provider_ms']:>9.3f} {int(r['single_write_hashes']):>7} {'':>9}   the path at both ends")
     print(f"  {'single tree: localize':28} {'':>9} {'':>9} {'':>7} {int(r['single_fetch_all_bytes']):>9,}"
           f"   {r['single_localize_rounds']} rounds, or every leaf hash")
 

@@ -123,5 +123,6 @@ def test_static_forest_never_splits_where_amf_does():
 
 
 def test_one_tree_costs_follow_from_n():
+    d = depth_of(1000)
     c = amf_static.one_tree_costs(1000, reads=10, writes=5)
-    assert (c["owner_hashes"], c["provider_leaves"], c["read_path"]) == (5 * 999, 5000, 10 * depth_of(1000))
+    assert (c["owner_hashes"], c["provider_leaves"], c["read_path"]) == (5 * (d + 1), 5 * d, 10 * d)

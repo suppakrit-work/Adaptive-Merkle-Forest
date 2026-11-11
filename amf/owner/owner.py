@@ -15,8 +15,11 @@ Three managers, all on the owner's machine:
 
 "No root gets into the index without passing Algorithm 3": the owner checks
 every announced tree against its own order and its own catalog, and computes
-the root itself (n - 1 hashes), or with one hash when a tree is split at its
-median or two trees of nearly equal size are merged (Lemma 1).
+the root itself: n - 1 hashes for a new or deleted object, a split elsewhere
+or an unequal merge; one hash when a tree is split at its median or two
+trees of nearly equal size are merged (Lemma 1); and the path above the leaf
+(ceil(log2 n) hashes) for a rewrite, against the tree's nodes it keeps from
+the first time it computed them.
 """
 import os
 import random
@@ -29,7 +32,7 @@ from amf.owner.catalog import TYPES_KEY, Catalog, seal_entry, seal_tombstone, se
 from amf.common.index import (TREE_ID_LEN, ForestDigest, IndexRow, digest_tree, freshest_signed, generate_signing_key,
                        id_to_int, new_tree_id, retire, row_leaf, sign_digest, sign_row, tag_range,
                        verify_digest)
-from amf.common.merkle import EMPTY_ROOT, is_hash, left_size, node_hash, root_of, verify_path
+from amf.common.merkle import EMPTY_ROOT, MerkleTree, is_hash, left_size, node_hash, root_of, verify_path
 from amf.common.orders import Order, sign_order
 
 
@@ -65,6 +68,8 @@ class Owner:
         self.digest_hashes = 0                          # hash evaluations spent keeping D (for the bench)
         self._dtree = None                              # D's tree over the live rows, and their positions
         self._dpos: dict[bytes, int] = {}
+        self._trees: dict[bytes, MerkleTree] = {}       # the nodes of a live tree, kept so that a rewrite
+        #                                                 is checked along one path (Algorithm 3, line 12)
         # Policy Manager: writes the owner made, per half of each tree
         self.write_counts: dict[bytes, list] = {}
         self.policy = None                              # policy.PolicyManager attaches itself here
@@ -105,6 +110,9 @@ class Owner:
         in_place = self._dtree is not None and all(r.tree_id in self._dpos and not r.retired for r in signed)
         for r in signed:
             self.index[r.tree_id] = r
+            kept = self._trees.get(r.tree_id)           # the kept nodes survive only a change they already show
+            if kept is not None and (r.retired or kept.n != r.count or kept.root != r.root):
+                del self._trees[r.tree_id]
         if in_place:                                    # a row changed in place: ceil(log2 T) hashes
             for r in signed:
                 self.digest_hashes += 1 + self._dtree.update(self._dpos[r.tree_id], row_leaf(r))
@@ -234,10 +242,28 @@ class Owner:
         except Exception:
             pass
 
+    def _tree_of(self, row: IndexRow) -> MerkleTree:
+        """The nodes of a live tree, built once from the catalog (n - 1 hashes) and kept."""
+        tree = self._trees.get(row.tree_id)
+        if tree is None or tree.n != row.count or tree.root != row.root:
+            leaves = self.catalog.leaves_in(row.lo, row.hi)
+            self.hashes += max(len(leaves) - 1, 0)
+            tree = self._trees[row.tree_id] = MerkleTree(leaves)
+        return tree
+
     def _check_write(self, row, announced, obj_id, leaf) -> None:
         tid, lo, hi, root, n = self._announcement(announced)
         if tid != row.tree_id or (lo, hi) != (row.lo, row.hi):
             raise VerificationError("the provider announced another tree or range")
+        if leaf is not None and self.catalog.name_of(obj_id) is not None:     # a rewrite: the shape stays
+            if n != row.count:
+                raise VerificationError(f"count {n}, the owner's books say {row.count}")
+            tree = self._tree_of(row).copy()
+            self.hashes += tree.update(self.catalog.position(obj_id, row.lo), leaf)
+            if tree.root != root:
+                raise VerificationError("the announced root is not the root over the owner's own leaves")
+            self._trees[row.tree_id] = tree
+            return
         expected = self._expected_leaves(row, obj_id, leaf)
         if n != len(expected):
             raise VerificationError(f"count {n}, the owner's books say {len(expected)}")

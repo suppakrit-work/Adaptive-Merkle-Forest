@@ -1,18 +1,18 @@
 step,runs,median_ms,owner_ms,provider_ms,network_ms,wait_ms,calls,sent_bytes,received_bytes
-"Phase 1: register, open 1 tree(s)",1,30.14,3.02,9.21,17.92,27.12,12,4053,435
-"Phase 2: batch write, 50 objects",1,275.25,6.41,262.48,6.36,268.84,8,121964,604
-"Phase 2: batch write, 50 objects",1,244.89,5.48,233.93,5.48,239.41,8,121967,604
-"Phase 2: batch write, 50 objects",1,239.58,5.56,229.38,4.63,234.02,8,121967,604
-"Phase 2: batch write, 50 objects",1,247.48,6.11,234.39,6.99,241.38,8,121967,605
-"Phase 2: batch write, 50 objects",1,253.33,8.58,237.97,6.78,244.75,8,121967,606
-"Phase 2: batch write, 50 objects",1,242.05,5.64,231.86,4.55,236.41,8,121967,605
-Phase 2: upload one object,20,15.24,2.01,7.68,5.55,13.22,8,5544,599
-Phase 3: owner reads one object,20,1.88,0.22,0.13,1.53,1.66,1,108,1971
-"Phase 3: data user reads, with D",20,8.44,1.51,0.3,6.62,6.93,4,432,4825
-"Phase 5: audit of the owner, s = 8",1,15.44,1.63,1.75,12.06,13.81,7,617,18561
-"Phase 3: 200 reads, Zipf 1",1,419.11,47.03,24.4,347.68,372.08,200,21600,396774
-Phase 6: localize (rounds),1,35.29,1.33,12.81,21.15,33.96,12,1381,4679
-Phase 6: localize (one exchange),1,15.75,0.43,8.07,7.24,15.31,4,402,2747
-Phase 6: recount of the whole forest,1,12.11,0.31,8.96,2.84,11.8,3,192,224
-Phase 6: fetch all leaf hashes (Wang),1,12.25,0.79,8.07,3.39,11.46,1,98,17302
-recovery from the providers,1,60.41,22.24,0.47,37.7,38.17,12,870,277218
+"Phase 1: register, open 1 tree(s)",1,33.23,3.36,10.46,19.4,29.86,12,4059,436
+"Phase 2: batch write, 50 objects",1,323.73,7.16,310.17,6.41,316.57,8,121970,606
+"Phase 2: batch write, 50 objects",1,259.89,5.89,247.01,6.99,254.0,8,121973,606
+"Phase 2: batch write, 50 objects",1,264.3,6.92,250.64,6.74,257.38,8,121973,607
+"Phase 2: batch write, 50 objects",1,244.81,5.49,232.69,6.64,239.33,8,121973,608
+"Phase 2: batch write, 50 objects",1,273.43,8.59,254.9,9.95,264.85,8,121973,607
+"Phase 2: batch write, 50 objects",1,255.11,7.93,242.13,5.05,247.18,8,121973,607
+Phase 2: upload one object,20,17.93,2.56,7.96,7.4,15.36,8,5550,601
+Phase 3: owner reads one object,20,2.34,0.29,0.17,1.88,2.05,1,108,2025
+"Phase 3: data user reads, with D",20,9.18,1.43,0.33,7.42,7.75,4,432,4833
+"Phase 5: audit of the owner, s = 8",1,15.28,1.81,0.66,12.81,13.47,7,616,18619
+"Phase 3: 200 reads, Zipf 1",1,428.99,51.58,26.79,350.63,377.42,200,21600,399825
+Phase 6: localize (rounds),1,36.09,1.56,11.21,23.32,34.53,12,1381,4679
+Phase 6: localize (one exchange),1,26.02,0.8,11.79,13.43,25.22,4,402,2748
+Phase 6: recount of the whole forest,1,15.84,0.63,10.13,5.08,15.21,3,192,225
+Phase 6: fetch all leaf hashes (Wang),1,16.43,1.31,10.48,4.64,15.13,1,98,17303
+recovery from the providers,1,65.06,22.31,0.66,42.09,42.75,12,870,277225

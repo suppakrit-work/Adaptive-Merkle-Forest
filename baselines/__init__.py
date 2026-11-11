@@ -7,6 +7,8 @@
                  TPDS 2012)
   mizrahi2024    a reshaping without a check (Mizrahi et al., ToN 2024; also
                  HMT, Shangguan et al. 2026): the verifier rebuilds the roots
+  shangguan2026  HMT, the frequency-aware tiered tree of Shangguan, Yaish and
+                 Malkhi (ePrint 2026/1235), run end to end on AMF's workloads
   amf_static     AMF with its Policy Manager switched off (ablation)
 
 Every baseline is built from AMF's own primitives (SHA-256, the Merkle tree

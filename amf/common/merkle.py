@@ -118,6 +118,12 @@ class MerkleTree:
             k //= 2
         return siblings
 
+    def copy(self) -> "MerkleTree":
+        """The same tree as a separate object: no hashing, one copy of the node array."""
+        t = MerkleTree.__new__(MerkleTree)
+        t.n, t.depth, t._nodes = self.n, self.depth, bytearray(self._nodes)
+        return t
+
     def update(self, i: int, leaf: bytes) -> int:
         """Replace the leaf at position i and rehash the nodes above it, the shape unchanged.
         Returns the hash evaluations spent: one per node on the path."""

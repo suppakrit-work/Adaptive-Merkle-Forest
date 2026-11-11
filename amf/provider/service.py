@@ -14,8 +14,10 @@ position (TreeState).  A provider holds trees of many owners side by side;
 trees are keyed by (own, tid).
 
 Every change of a root goes the same way: the provider stores what it was
-given, builds the changed or new tree in the Shadow Area and announces range,
-root and count; the live trees keep serving until the signed rows arrive.  A
+given, builds the changed or new tree in the Shadow Area (a rewrite copies
+the node array and rehashes one path; anything else rebuilds the tree) and
+announces range, root and count; the live trees keep serving until the
+signed rows arrive.  A
 row for a pending tree promotes it (and that is the acknowledgement); a
 retired row removes a live tree; a row that moves one of our trees to another
 provider turns our copy into a retained one, kept until a release order.
@@ -49,6 +51,14 @@ class TreeState:
     @classmethod
     def build(cls, own, tree_id, lo, hi, ids, leaves):
         return cls(own, tree_id, lo, hi, list(ids), list(leaves), MerkleTree(list(leaves)))
+
+    def rewritten(self, j: int, leaf: bytes) -> "TreeState":
+        """The same tree with the leaf at position j replaced: the shape does not change, so the
+        node array is copied and only the path above j is rehashed (ceil(log2 n) hashes)."""
+        tree = self.tree.copy()
+        tree.update(j, leaf)
+        leaves = self.leaves[:j] + [leaf] + self.leaves[j + 1:]
+        return TreeState(self.own, self.tree_id, self.lo, self.hi, self.ids, leaves, tree)
 
     @property
     def key(self):
@@ -181,11 +191,11 @@ class Provider:
             raise RuntimeError("an operation is already pending on this tree")
         leaf = crypto.leaf_hash(obj_id, ct)
         j = bisect_left(t.ids, obj_id)
-        if j < len(t.ids) and t.ids[j] == obj_id:                       # rewrite under the same name
-            ids, leaves = t.ids, t.leaves[:j] + [leaf] + t.leaves[j + 1:]
-        else:
-            ids, leaves = t.ids[:j] + [obj_id] + t.ids[j:], t.leaves[:j] + [leaf] + t.leaves[j:]
-        new = TreeState.build(t.own, t.tree_id, t.lo, t.hi, ids, leaves)
+        if j < len(t.ids) and t.ids[j] == obj_id:                       # rewrite: the path above j
+            new = t.rewritten(j, leaf)
+        else:                                                           # a new leaf: the tree is rebuilt
+            new = TreeState.build(t.own, t.tree_id, t.lo, t.hi, t.ids[:j] + [obj_id] + t.ids[j:],
+                                  t.leaves[:j] + [leaf] + t.leaves[j:])
         self.shadow[t.key] = Pending(new, "write", staged={obj_id: ct})
         return new.announce()
 
