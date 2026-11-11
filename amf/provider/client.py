@@ -9,8 +9,10 @@ back as the same exception type where it makes sense (PermissionError for an
 order that does not verify, ValueError for a tree that does not match, ...);
 anything else, a refusal or a dead connection among them, is a RemoteError.
 
-Every call counts the bytes it sent and received, so the cost of an operation
-over a real network can be read off afterwards (see net_demo.py).
+Every call counts the bytes it sent and received and adds up the time the
+provider reports for its own work, so the cost of an operation over a real
+network can be split afterwards into the owner's work, the provider's work and
+the wire (see net_demo.py).
 """
 import http.client
 import socket
@@ -39,6 +41,7 @@ class Connection:
         self.lock = threading.Lock()
         self.conn = None
         self.calls = self.sent = self.received = 0
+        self.service_us = 0                      # microseconds the provider reported for its own work
 
     def request(self, method: str, path: str, body: bytes = b"") -> bytes:
         with self.lock:
@@ -84,6 +87,10 @@ class RemoteProvider:
 
     def call(self, part: str, method: str, *args):
         reply = wire.loads(self.net.request("POST", f"/{part}/{method}", wire.dumps({"args": list(args)})))
+        us = reply.get("us") if isinstance(reply, dict) else None
+        if type(us) is int and us >= 0:          # the provider's own time, counted even for a refusal
+            with self.net.lock:
+                self.net.service_us += us
         if "error" in reply:
             raise ERRORS.get(reply["error"], RemoteError)(reply["message"])
         return reply["result"]

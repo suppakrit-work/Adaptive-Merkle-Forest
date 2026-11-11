@@ -4,9 +4,12 @@
                          --peer B=http://localhost:8002 --peer C=http://localhost:8003
 
 POST /provider/<method>, /dht/<method> and /catalog/get take {"args": [...]}
-in the wire format of amf.common.wire and answer {"result": ...} or
-{"error": type, "message": ...}.  Only the protocol's own methods can be
-called; fault injection (corrupt) only when the service runs with --debug.
+in the wire format of amf.common.wire and answer {"result": ..., "us": ...} or
+{"error": type, "message": ..., "us": ...}, where us is the time the provider
+spent on the call in microseconds (decoding and the work itself, not the
+network), so a caller can split what it waited for.  Only the protocol's own
+methods can be called; fault injection (corrupt) only when the service runs
+with --debug.
 GET /health and GET /stats answer in plain JSON.
 
 The Migrate Pipe: a migration order goes to the destination, which pulls the
@@ -25,6 +28,7 @@ import argparse
 import json
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from amf.common import wire
@@ -129,6 +133,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) != 2:
             self._send(404, b'{"error": "not found"}')
             return
+        t0 = time.perf_counter()
         try:
             args = wire.loads(body).get("args", [])
             reply = {"result": self.service.call(parts[0], parts[1], args)}
@@ -137,6 +142,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as e:                   # the caller decides what a failure means
             reply = {"error": type(e).__name__, "message": str(e)}
+        reply["us"] = int(1e6 * (time.perf_counter() - t0))     # the provider's own time on this call
         self._send(200, wire.dumps(reply))
 
     def log_message(self, fmt, *args):

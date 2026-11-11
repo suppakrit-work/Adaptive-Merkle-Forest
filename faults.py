@@ -347,7 +347,7 @@ def localization(tb, args):
     tb.add("IV-E", "malicious A: reports the damaged tree as clean", "walk (Alg 5)", False,
            f"walk says {loc.verdict}: not caught, by design (IV-E)", note="a false rec cannot be seen without the object")
     tb.add("IV-E", "malicious A: reports the damaged tree as clean", "owner read (Alg 1)", e and e.kind == "ciphertext",
-           f"read names A pos {e.position} = {name}")
+           f"read names A pos {pos(e)} = {name}")
 
 
 def reports(tb, args):

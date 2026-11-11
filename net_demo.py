@@ -8,8 +8,9 @@ Start the providers first (docker compose up, or python -m amf.provider.server .
 
 The owner runs here; each provider is reached over HTTP.  Every step is timed
 and the bytes and round trips it took are counted at the owner's end, and the
-wall time is split into the time the owner waited on the providers and what
-is left, its own work (checks, signatures, the wire format), so the same
+wall time is split three ways: what is left to the owner (checks, signatures,
+the wire format), the time the providers report for their own work (each
+reply carries it), and the rest of the wait, which is the network, so the same
 script measures a run on localhost or across three clouds.  Objects go up as batch
 writes of --batch objects per tree (one announcement, one check, Algorithm 3
 line 12), then single writes and reads are timed on their own.  Reads follow
@@ -41,32 +42,39 @@ TYPES = (("image", 1, "A"), ("video", 2, "B"), ("document", 3, "C"))
 
 
 class Meter:
-    """Wall time, time on the wire, round trips and bytes of one step, summed over every provider."""
+    """Wall time of one step split into the owner's work, the providers' work and the network,
+    with the round trips and bytes it took, summed over every provider.  Provider time is the
+    sum of what the providers reported, so when the owner talks to them at once it can exceed
+    the time the owner waited; network_ms is then what is left of the wait, at least 0."""
 
     def __init__(self, provs):
         self.provs = provs
         self.rows = []
 
     def counters(self):
-        return [sum(getattr(p.net, k) for p in self.provs) for k in ("calls", "sent", "received")]
+        return [sum(getattr(p.net, k) for p in self.provs) for k in ("calls", "sent", "received", "service_us")]
 
     def run(self, step, fn, repeat=1):
-        times, waited, out = [], [], None
+        times, waited, served, out = [], [], [], None
         for k in range(repeat):
             c0, w0 = self.counters(), waits.waited
             t0 = time.perf_counter()
             out = fn()
             times.append(1000 * (time.perf_counter() - t0))
             waited.append(1000 * (waits.waited - w0))
+            delta = [b - a for a, b in zip(c0, self.counters())]
+            served.append(delta[3] / 1000)
             if k == 0:
-                first = [b - a for a, b in zip(c0, self.counters())]
-        wall, wait = statistics.median(times), statistics.median(waited)
+                first = delta
+        wall, wait, prov = statistics.median(times), statistics.median(waited), statistics.median(served)
+        wait = min(wait, wall)
         row = {"step": step, "runs": repeat, "median_ms": round(wall, 2), "owner_ms": round(max(wall - wait, 0), 2),
-               "wait_ms": round(min(wait, wall), 2), "calls": first[0], "sent_bytes": first[1],
-               "received_bytes": first[2]}
+               "provider_ms": round(prov, 2), "network_ms": round(max(wait - prov, 0), 2),
+               "wait_ms": round(wait, 2), "calls": first[0], "sent_bytes": first[1], "received_bytes": first[2]}
         self.rows.append(row)
-        print(f"  {step:38} {row['median_ms']:>9.2f} ms  owner {row['owner_ms']:>8.2f}  wait {row['wait_ms']:>8.2f}"
-              f"  {row['calls']:>5} calls {row['sent_bytes']:>9,} B out {row['received_bytes']:>9,} B in")
+        print(f"  {step:38} {row['median_ms']:>9.2f} ms  owner {row['owner_ms']:>8.2f}  provider {row['provider_ms']:>8.2f}"
+              f"  net {row['network_ms']:>8.2f}  {row['calls']:>5} calls {row['sent_bytes']:>9,} B out"
+              f" {row['received_bytes']:>9,} B in")
         return out
 
 
@@ -187,9 +195,12 @@ def main():
     print(f"    forest: {len(live)} trees, {min(r.count for r in live)}-{max(r.count for r in live)} leaves")
 
     image = max((r for r in live if r.provider == "A"), key=lambda r: r.count)
+    h0, d0 = owner.hashes, owner.digest_hashes
     a, b, _ = m.run("Phase 4: split at the median", lambda: owner.split(image.tree_id))
+    h1 = owner.hashes
     ab = m.run("Phase 4: merge the halves back", lambda: owner.merge(a.tree_id, b.tree_id))
-    print(f"    owner hashes for both checks: 2 (one each); root unchanged: {ab.root == image.root}")
+    print(f"    owner hashes for the checks: split {h1 - h0}, merge {owner.hashes - h1} (Algorithm 3, lines 5-6); "
+          f"for D: {owner.digest_hashes - d0}; root unchanged: {ab.root == image.root}")
     moved = m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
     later = Auditor([owner.pk], s=8).audit_tree(moved, plist)
     print(f"    a later audit of B passes: {later.ok}; only then is A told to release")

@@ -179,21 +179,23 @@ def bench_amf(w, reps, s):
     out["mean_tree"] = round(sum(r.count for r in rows) / len(rows), 1)
     out["max_depth"] = max(depth_of(r.count) for r in rows)
 
-    # read, by the owner and by a data user holding id and D
-    t_own, t_user, path_b, user_b = [], [], [], []
+    # read, by the owner and by a data user holding id and D; the proof sizes are what one
+    # provider (and, for the user, one DHT node) returns, not the bytes of every message
+    t_own, p_own, t_user, p_user, path_b, user_b = [], [], [], [], [], []
     reader = Reader([o.pk])
     for _ in range(reps):
         name = w.a_name()
         obj_id = o.catalog.get(name)[0]
         row = o.row_for(obj_id)
-        _, om, _, _ = w.run(lambda: o.read(name))
-        t_own.append(om)
-        _, um, _, _ = w.run(lambda: reader.read(obj_id, o.digest, w.plist))
-        t_user.append(um)
+        _, om, pm, _ = w.run(lambda: o.read(name))
+        t_own.append(om), p_own.append(pm)
+        _, um, pm, _ = w.run(lambda: reader.read(obj_id, o.digest, w.plist))
+        t_user.append(um), p_user.append(pm)
         path_b.append(32 * depth_of(row.count) + 32)                       # path + stored leaf
         T = o.digest.count
         user_b.append(path_b[-1] + len(row.payload()) - len(ROW_DOMAIN) + SIG_LEN + 32 * depth_of(T))
-    out.update(read_owner_ms=med(t_own), read_user_ms=med(t_user),
+    out.update(read_owner_ms=med(t_own), read_provider_ms=med(p_own),
+               read_user_ms=med(t_user), read_user_provider_ms=med(p_user),
                read_proof_bytes=med(path_b), read_user_proof_bytes=med(user_b))
 
     # upload of a new object into a tree of at most 3/4 N_up
@@ -223,16 +225,16 @@ def bench_amf(w, reps, s):
                merge_bytes=ANNOUNCE, rebuild_verifier_ms=med(rb_ms), rebuild_verifier_bytes=med(rb_bytes))
 
     # split off the median (a quarter of the way in) and the unequal merge back: recomputed roots
-    sm, sh, mm, mh = [], [], [], []
+    sm, sp, sh, mm, mp, mh = [], [], [], [], [], []
     for _ in range(reps):
         row = w.a_tree()
         p = id_to_int(o.catalog.id_at(row.lo, max(1, row.count // 4)))
-        (a, b, _), om, _, h = w.run(lambda: o.split(row.tree_id, p))
-        sm.append(om), sh.append(h)
-        _, om, _, h = w.run(lambda: o.merge(a.tree_id, b.tree_id))
-        mm.append(om), mh.append(h)
-    out.update(split_other_owner_ms=med(sm), split_other_hashes=med(sh),
-               merge_unequal_owner_ms=med(mm), merge_unequal_hashes=med(mh))
+        (a, b, _), om, pm, h = w.run(lambda: o.split(row.tree_id, p))
+        sm.append(om), sp.append(pm), sh.append(h)
+        _, om, pm, h = w.run(lambda: o.merge(a.tree_id, b.tree_id))
+        mm.append(om), mp.append(pm), mh.append(h)
+    out.update(split_other_owner_ms=med(sm), split_other_provider_ms=med(sp), split_other_hashes=med(sh),
+               merge_unequal_owner_ms=med(mm), merge_unequal_provider_ms=med(mp), merge_unequal_hashes=med(mh))
 
     # migration: root unchanged, s challenges at the destination; then the release order
     mo, mp, mh, mb = [], [], [], []
@@ -249,13 +251,13 @@ def bench_amf(w, reps, s):
 
     # audit of one tree by an auditor holding public keys only
     aud = Auditor([o.pk], s=s, rng=random.Random(7))
-    am, ab_ = [], []
+    am, ap, ab_ = [], [], []
     for _ in range(reps):
         row = w.a_tree()
-        _, ms, _, _ = w.run(lambda: aud.audit_tree(row, w.plist))
-        am.append(ms)
+        _, ms, pm, _ = w.run(lambda: aud.audit_tree(row, w.plist))
+        am.append(ms), ap.append(pm)
         ab_.append(min(s, row.count) * (crypto.ID_LEN + w.ct_len() + 32 + 32 * depth_of(row.count)))
-    out.update(audit_ms=med(am), audit_bytes=med(ab_))
+    out.update(audit_ms=med(am), audit_provider_ms=med(ap), audit_bytes=med(ab_))
 
     out.update(bench_localize(w, reps))
     return out
@@ -369,18 +371,21 @@ def print_row(r):
           f"   (keeping D: {int(r['upload_d_hashes'])} hashes for a row changed in place, "
           f"{int(r['split_d_hashes'])} when rows are added)")
     lines = [
-        ("read (owner)", r["read_owner_ms"], None, None, r["read_proof_bytes"]),
-        ("read (data user, with D)", r["read_user_ms"], None, None, r["read_user_proof_bytes"]),
+        ("read (owner)", r["read_owner_ms"], r["read_provider_ms"], None, r["read_proof_bytes"]),
+        ("read (data user, with D)", r["read_user_ms"], r["read_user_provider_ms"], None,
+         r["read_user_proof_bytes"]),
         ("upload", r["upload_owner_ms"], r["upload_provider_ms"], r["upload_hashes"], r["upload_bytes"]),
         ("split at the median", r["split_median_owner_ms"], r["split_median_provider_ms"],
          r["split_median_hashes"], r["split_bytes"]),
-        ("split elsewhere", r["split_other_owner_ms"], None, r["split_other_hashes"], r["split_bytes"]),
+        ("split elsewhere", r["split_other_owner_ms"], r["split_other_provider_ms"], r["split_other_hashes"],
+         r["split_bytes"]),
         ("merge, near-equal", r["merge_equal_owner_ms"], r["merge_equal_provider_ms"], r["merge_equal_hashes"],
          r["merge_bytes"]),
-        ("merge, unequal", r["merge_unequal_owner_ms"], None, r["merge_unequal_hashes"], r["merge_bytes"]),
+        ("merge, unequal", r["merge_unequal_owner_ms"], r["merge_unequal_provider_ms"], r["merge_unequal_hashes"],
+         r["merge_bytes"]),
         ("migration (s challenges)", r["migrate_owner_ms"], r["migrate_provider_ms"], r["migrate_hashes"],
          r["migrate_bytes"]),
-        ("audit of one tree", r["audit_ms"], None, None, r["audit_bytes"]),
+        ("audit of one tree", r["audit_ms"], r["audit_provider_ms"], None, r["audit_bytes"]),
         ("localize, rounds", r["localize_owner_ms"], r["localize_provider_ms"], r["localize_hashes"],
          r["localize_bytes"]),
         ("localize, one exchange", r["one_exchange_owner_ms"], None, r["one_exchange_hashes"],
