@@ -31,6 +31,7 @@ Results go to results/net.csv (--out).
 """
 import argparse
 import csv
+import hashlib
 import random
 import statistics
 import time
@@ -154,7 +155,9 @@ def main():
         print(f"  {name} at {p.url}: up{' (debug)' if h['debug'] else ''}")
 
     m = Meter(list(provs.values()))
-    owner = Owner(s=8, rng=random.Random(args.seed), parallel=not args.sequential)
+    mk = hashlib.sha256(b"amf-net-%d" % args.seed).digest()   # the master key from --seed: every run, laptop
+    owner = Owner(mk=mk, s=8, rng=random.Random(args.seed),    # or cloud, builds the same identifiers and forest
+                  parallel=not args.sequential)
     types = (("all", 1, "A"),) if args.single else TYPES
     pm = amf_static.no_policy(owner) if args.single else PolicyManager(owner, upper=args.upper, lower=args.lower)
     print(f"\nsteps (owner here, {args.files} objects of {args.object_bytes} B, "
@@ -240,8 +243,9 @@ def main():
                                                          owner.catalog.leaves_in(tree.lo, tree.hi)))
         print(f"    fetch-all names positions {found} after {nbytes:,} B of leaf hashes")
         if pm is not None:
+            ftype = {tag: t for t, tag in owner.type_table.items()}[victim[32]]   # the type byte after own (III-B)
             moved = m.run("Phase 4: failed check -> repair, migrate",
-                          lambda: pm.failed_check(at, [tree.tree_id], repairs={name: (b"repaired copy", "video")}))
+                          lambda: pm.failed_check(at, [tree.tree_id], repairs={name: (b"repaired copy", ftype)}))
             for row in moved:
                 if Auditor([owner.pk], s=8).audit_tree(row, plist).ok:
                     owner.release(row.tree_id, at)

@@ -98,6 +98,36 @@ def test_count_min_sketch_never_undercounts():
 
 # ---- HMT with a verifier ------------------------------------------------------------------------
 
+def test_a_proof_taken_for_a_write_is_not_counted_as_an_access():
+    items = keyed(50)
+    h = HMT(items, theta=0.5, hot_capacity=5, candidates=10, rebuild_every=2)
+    k = items[7][0]
+    h.read(k, track=False)
+    assert h.cms.estimate(k) == 0
+    h.read(k)
+    h.write(k, b"\x01" * 32)
+    assert h.cms.estimate(k) == 2
+
+
+def test_a_rebuilding_verifier_recomputes_only_the_tiers_whose_root_changed():
+    rnd = random.Random(5)
+    items = keyed(400)
+    h = HMT(items, theta=0.5, hot_capacity=40, candidates=80, rebuild_every=3)
+    keys = [k for k, _ in items]
+    partial, full = Verifier(h.global_root), Verifier(h.global_root)
+    changed = 0
+    for period in range(12):
+        for k in rnd.choices(keys[:20], k=100):     # 20 keys fit the hot tier: once they are in, a rebuild
+            h.read(k)                               # changes the hot root and leaves the cold one alone
+        held = h.roots()
+        if h.end_of_period()["changed"]:
+            changed += 1
+            partial.rebuild_layout(h, held)
+            full.rebuild_layout(h)
+            assert partial.global_root == full.global_root == h.global_root
+    assert changed > 0 and partial.hashes < full.hashes
+
+
 def test_hmt_reads_writes_and_layout_changes_verify_against_the_global_root():
     rnd = random.Random(4)
     items = keyed(600)
@@ -110,7 +140,7 @@ def test_hmt_reads_writes_and_layout_changes_verify_against_the_global_root():
     for step in range(1, 2001):
         k = rnd.choices(ranked, weights)[0]
         if rnd.random() < 0.3:
-            proof, tier, roots = h.read(k)
+            proof, tier, roots = h.read(k, track=False)        # the write counts the access
             new = rnd.randbytes(32)
             h.write(k, new)
             assert trusting.check_write(leaves[k], new, proof, tier, roots)

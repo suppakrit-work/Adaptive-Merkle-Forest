@@ -144,6 +144,22 @@ def test_a_provider_naming_a_row_no_node_holds_is_refused():
     assert e.value.provider == "A" and e.value.kind == "wrong tree or version"
 
 
+def test_a_provider_answering_for_a_row_moved_elsewhere_is_blamed_itself():
+    owner, provs, files, plist, aud = setup()
+    obj_id, d = owner.reader_view("fimage-3", "image")
+    a, row = provs["A"], owner.row_for(obj_id)
+    real = a.read
+
+    def shifting(oid):                                           # A answers while the tree moves to B,
+        tid, version, i, stored, ct, path = real(oid)            # with garbage and the new row's version
+        moved = owner.migrate(row.tree_id, "B")
+        return tid, moved.version, i, stored, b"garbage" + ct[7:], path
+    a.read = shifting
+    with pytest.raises(ReadRefused) as e:
+        Reader([owner.pk]).read(obj_id, d, plist)
+    assert e.value.provider == "A" and e.value.kind == "wrong tree or version"
+
+
 def test_a_data_user_sees_a_damaged_object():
     owner, provs, files, plist, aud = setup()
     obj_id, d = owner.reader_view("fdocument-2", "document")

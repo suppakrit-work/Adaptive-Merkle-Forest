@@ -38,7 +38,9 @@ def localize(check_range, n: int) -> tuple[int, int, int]:
     """Find one bad block among n by re-challenging halves.  check_range(lo, hi) must challenge the
     positions [lo, hi) and return True iff every answer verifies.  The challenge over all n blocks
     is the one that failed and is counted; then the first half of the suspect range is challenged
-    and the search continues in whichever half is bad.  Returns (position, re-challenges, blocks)."""
+    and the search continues in whichever half is bad.  Returns (position, re-challenges, blocks).
+    With several bad blocks it returns the leftmost; it must be called after a failed challenge,
+    since on a range with no bad block it returns n - 1 without having checked it."""
     if n < 1:
         raise ValueError("nothing to localize")
     rounds, blocks, lo, hi = 0, n, 0, n

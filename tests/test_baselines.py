@@ -47,8 +47,14 @@ def test_path_update_refuses_a_wrong_old_block_or_path():
     assert check.hashes == 0
 
 
+def test_mean_path_is_the_mean_over_the_positions():
+    for n in (1, 2, 3, 7, 33, 1000, 10000):
+        t = MerkleTree(leaves_of(n))
+        assert abs(wang2011.mean_path(n) - sum(len(t.path(i)) for i in range(n)) / n) < 1e-9
+
+
 def test_single_tree_costs_follow_from_n():
-    d = depth_of(10000)
+    d = wang2011.mean_path(10000)
     c = wang2011.access_costs(10000, reads=900, writes=100)
     assert (c["owner_hashes"], c["provider_leaves"], c["read_path"]) == (200 * d, 100 * d, 900 * d)
     assert wang2011.proof_bytes(1000) == 32 * 10 + 32 and wang2011.fetch_all_bytes(1000) == 32_000
@@ -123,6 +129,6 @@ def test_static_forest_never_splits_where_amf_does():
 
 
 def test_one_tree_costs_follow_from_n():
-    d = depth_of(1000)
+    d = wang2011.mean_path(1000)
     c = amf_static.one_tree_costs(1000, reads=10, writes=5)
     assert (c["owner_hashes"], c["provider_leaves"], c["read_path"]) == (5 * (d + 1), 5 * d, 10 * d)

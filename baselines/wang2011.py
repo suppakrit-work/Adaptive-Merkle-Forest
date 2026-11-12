@@ -34,6 +34,13 @@ def depth(n: int) -> int:
     return depth_of(n)
 
 
+def mean_path(n: int) -> float:
+    """The mean path length over the n positions: every leaf of the canonical shape sits at depth
+    d = ceil(log2 n) or d - 1, 2n - 2^d of them at d, so the mean is d + 1 - 2^d / n."""
+    d = depth_of(n)
+    return 0.0 if n <= 1 else d + 1 - 2 ** d / n
+
+
 def proof_bytes(n: int) -> int:
     """What a reader receives to check one block: the path and the stored leaf."""
     return HASH_LEN * depth_of(n) + HASH_LEN
@@ -68,9 +75,10 @@ class PathUpdate:
 
 def access_costs(n: int, reads: int, writes: int) -> dict:
     """Per-workload totals when every access lands in the one tree of n blocks: the verifier
-    spends 2 log2 n hashes per update and the server rehashes log2 n nodes; a read carries a
-    path of log2 n hashes.  The same dict shape as workload.py's configurations."""
-    d = depth_of(n)
+    spends two paths per update and the server rehashes one; a read carries one path, a path
+    being the mean over the n positions (about log2 n), as the measured rows count it.  The same
+    dict shape as workload.py's configurations."""
+    d = mean_path(n)
     return dict(owner_hashes=writes * 2 * d, provider_leaves=writes * d, read_path=reads * d,
                 reads=reads, writes=writes, owner_ms=None, provider_ms=None, splits=0, merges=0,
                 trees=1, mean_tree=n)

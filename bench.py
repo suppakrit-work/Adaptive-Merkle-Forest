@@ -16,7 +16,7 @@ and the same for the baselines of the baselines/ package (one module per
 paper, each saying what it takes from it and what it leaves out):
 
   single tree  one Merkle tree over all N objects (baselines/wang2011.py):
-               read path, provider rebuild per write, and a rewrite checked
+               read path, provider path update per rewrite, and a rewrite checked
                the Wang way (old path, new root: 2 log2 N hashes)
   rebuild      a reshaping without a check (baselines/mizrahi2024.py, also
                HMT): the verifier downloads the tree and rebuilds the roots
@@ -39,6 +39,7 @@ over --reps runs.  Results go to results/bench.csv, one row per N.
 """
 import argparse
 import csv
+import hashlib
 import random
 import statistics
 import time
@@ -93,7 +94,8 @@ class Clock:
 class World:
     def __init__(self, n, obj_bytes, upper, s, seed, single=False):
         self.rnd = random.Random(seed)
-        self.owner = Owner(s=s, rng=random.Random(seed + 1))
+        self.owner = Owner(mk=hashlib.sha256(b"amf-bench-%d" % seed).digest(), s=s,   # MK from the seed:
+                           rng=random.Random(seed + 1))                              # the same trees every run
         self.provs = {p: Provider(p) for p in "ABC"}
         self.plist = list(self.provs.values())
         self.clock = Clock()
@@ -201,7 +203,7 @@ def bench_amf(w, reps, s):
     for k in range(reps):
         t = w.rnd.choice(w.types)
         d0 = o.digest_hashes
-        _, om, pm, h = w.run(lambda: o.upload(f"new-{t}-{k}", w.rnd.randbytes(w.obj_bytes), t))
+        _, om, pm, h = w.run(lambda: o.upload(f"{t}-new-{k}", w.rnd.randbytes(w.obj_bytes), t))
         om_.append(om), pm_.append(pm), hs.append(h), dh.append(o.digest_hashes - d0)
     out.update(upload_owner_ms=med(om_), upload_provider_ms=med(pm_), upload_hashes=med(hs),
                upload_d_hashes=med(dh), upload_bytes=ANNOUNCE)
@@ -276,7 +278,7 @@ def bench_amf(w, reps, s):
 
 def bench_localize(w, reps):
     o, loc = w.owner, Localizer(w.owner)
-    r_ms, r_pm, rounds, hashes, by, e_ms, e_h, e_b, fa_ms, fa_b, rc_rounds, rc_blocks = ([] for _ in range(12))
+    r_ms, r_pm, rounds, hashes, by, e_ms, e_h, e_b, fa_ms, fa_pm, fa_b, rc_rounds, rc_blocks = ([] for _ in range(13))
     for _ in range(reps):
         row = w.a_tree()
         prov = w.provs[row.provider]
@@ -289,10 +291,10 @@ def bench_localize(w, reps):
         by.append(rep.bytes_received)
         one, om, _, _ = w.run(lambda: loc.localize(row.tree_id, one_exchange=True))
         e_ms.append(om), e_h.append(one.owner_hashes), e_b.append(one.bytes_received)
-        (found, nbytes), om, _, _ = w.run(                                   # the owner's leaves come from its catalog
+        (found, nbytes), om, pm, _ = w.run(                                   # the owner's leaves come from its catalog
             lambda: wang2011.fetch_all(prov, o.own, row.tree_id, o.catalog.leaves_in(row.lo, row.hi)))
         assert found == [pos]
-        fa_ms.append(om), fa_b.append(nbytes)
+        fa_ms.append(om), fa_pm.append(pm), fa_b.append(nbytes)
 
         def check_range(lo, hi):                                             # one CPDP-style challenge
             for i, obj_id, ct, _, path in prov.challenge(o.own, row.tree_id, range(lo, hi)):
@@ -307,7 +309,7 @@ def bench_localize(w, reps):
     return dict(localize_owner_ms=med(r_ms), localize_provider_ms=med(r_pm), localize_rounds=med(rounds),
                 localize_hashes=med(hashes), localize_bytes=med(by), one_exchange_owner_ms=med(e_ms),
                 one_exchange_hashes=med(e_h), one_exchange_bytes=med(e_b), fetch_all_owner_ms=med(fa_ms),
-                fetch_all_bytes=med(fa_b), rechallenge_rounds=med(rc_rounds), rechallenge_blocks=med(rc_blocks))
+                fetch_all_provider_ms=med(fa_pm), fetch_all_bytes=med(fa_b), rechallenge_rounds=med(rc_rounds), rechallenge_blocks=med(rc_blocks))
 
 
 # ---- baseline: one Merkle tree over all objects ---------------------------------------------
@@ -319,9 +321,10 @@ def bench_single(w, reps):
     out["single_depth"] = wang2011.depth(row.count)
     out["single_read_proof_bytes"] = wang2011.proof_bytes(row.count)
     # a rewrite checked the Wang way: the old leaf and path give the old root, the new leaf the new root
-    wm, wh = [], []
+    wm, wh, picked = [], [], []
     for _ in range(reps):
         i = w.rnd.randrange(row.count)
+        picked.append(i)
         old, path = t.leaves[i], t.tree.path(i)
         new = crypto.leaf_hash(t.ids[i], w.rnd.randbytes(w.ct_len()))
         check = wang2011.PathUpdate()
@@ -330,11 +333,12 @@ def bench_single(w, reps):
         wm.append(1000 * (time.perf_counter() - t0))
         wh.append(check.hashes)
     out.update(single_rewrite_check_ms=med(wm), single_rewrite_check_hashes=med(wh))
-    # the same rewrite under AMF's check on the one tree: the path at both ends, plus D
+    # the same rewrites under AMF's check on the one tree, at the same positions: the path at both
+    # ends (o.hashes; D is not counted here)
     pm_, om_, hs = [], [], []
     o._tree_of(row)                                          # the owner's nodes of the tree, built once
-    for _ in range(max(1, reps // 4)):
-        name = w.a_name(row)
+    for i in picked:
+        name = w.owner.catalog.name_of(t.ids[i])
         _, om, pm, h = w.run(lambda: o.upload(name, w.rnd.randbytes(w.obj_bytes), "all"))
         pm_.append(pm), om_.append(om), hs.append(h)
     out.update(single_write_provider_ms=med(pm_), single_write_owner_ms=med(om_), single_write_hashes=med(hs))
@@ -410,7 +414,7 @@ def print_row(r):
     print("  baselines")
     print(f"  {'rebuild at the verifier':28} {r['rebuild_verifier_ms']:>9.3f} {'':>9} {'':>7} "
           f"{int(r['rebuild_verifier_bytes']):>9,}")
-    print(f"  {'localize, fetch all leaves':28} {r['fetch_all_owner_ms']:>9.3f} {'':>9} {'':>7} "
+    print(f"  {'localize, fetch all leaves':28} {r['fetch_all_owner_ms']:>9.3f} {r['fetch_all_provider_ms']:>9.3f} {'':>7} "
           f"{int(r['fetch_all_bytes']):>9,}")
     print(f"  {'localize, re-challenge':28} {'':>9} {'':>9} {'':>7} {'':>9}   "
           f"{int(r['rechallenge_rounds'])} challenges, {int(r['rechallenge_blocks']):,} blocks touched")

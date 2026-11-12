@@ -1,8 +1,8 @@
 """The baselines of Section V, one module per scheme, named after the paper it follows.
 
   wang2011       one Merkle hash tree per owner (Wang et al., TPDS 2011): path
-                 proofs, the path-update check, fetch-all as its only way to a
-                 bad block
+                 proofs, the path-update check; fetch-all, our cheapest way to a
+                 bad block in a scheme without localization
   zhu2012        fault localization by re-challenging halves (Zhu et al., CPDP,
                  TPDS 2012)
   mizrahi2024    a reshaping without a check (Mizrahi et al., ToN 2024; also

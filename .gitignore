@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 data/
 Claude outputs/
+amf.zip

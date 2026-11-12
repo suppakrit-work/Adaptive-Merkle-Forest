@@ -222,7 +222,8 @@ class Reader:
             # the provider names another row: fetch the newest again before judging, so a read that
             # crosses a write blames no one, and a provider naming a row no node holds is refused
             fresh = self.row_for(obj_id, digest, providers)
-            if (fresh.tree_id, fresh.version) == (tid, version):
+            if (fresh.tree_id, fresh.version, fresh.provider) == (tid, version, row.provider):   # and the
+                # same provider: one that answers for a row now held elsewhere is blamed itself (IV)
                 row = fresh
             else:
                 raise ReadRefused(row.provider, row.tree_id, i, "wrong tree or version")

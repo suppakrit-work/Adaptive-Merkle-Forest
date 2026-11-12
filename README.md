@@ -2,7 +2,10 @@
 
 Prototype for the CSS 453 paper *Adaptive Merkle Forest: Dynamic Tree Composition
 and Decomposition for Scalable Integrity Verification in Multi-Cloud Storage*.
-Python 3.11; the only library it needs is `cryptography`.
+Python 3.11 or newer (tested on 3.11, 3.12 and 3.13); the only library it needs is
+`cryptography`. `bench.py`, `workload.py`, `faults.py` and `net_demo.py` derive the owner's
+master key from their seed, so a rerun builds the same trees and gives the same counts; only
+the times change.
 
 ## Layout
 
@@ -63,7 +66,8 @@ to the DHT nodes one at a time instead of all at once, for comparison.
 Three runs make the end-to-end comparison of Section V, each against freshly
 started providers: AMF as above; the same with `--rounds 0 --upper 1000000`
 (the forest that never restructures); and `--single` (one tree over all
-objects at A, no policy).
+objects at A, no policy). On one machine they are written (`--out`) to
+`results/net.csv`, `results/net_static.csv` and `results/net_single.csv`.
 
 ## Limits of the prototype
 

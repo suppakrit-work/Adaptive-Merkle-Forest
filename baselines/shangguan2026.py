@@ -580,8 +580,8 @@ class Verifier:
 
     def _global(self, tier, tier_root, roots) -> bytes:
         cold, base, overflow, nonempty = roots
-        if tier == "cold":
-            cold = tier_root
+        if tier == "cold":     # Algorithm 3 hands the verifier r_hot itself: derived here, not counted
+            return self.count.tier(GLOBAL_PREFIX, tier_root, hot_root_from(base, overflow, nonempty, HashCount()))
         elif tier == "base":
             base = tier_root
         else:

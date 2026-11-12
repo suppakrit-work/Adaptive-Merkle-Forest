@@ -13,6 +13,7 @@ Results go to results/faults.csv.
 """
 import argparse
 import csv
+import hashlib
 import math
 import random
 from dataclasses import replace
@@ -31,7 +32,7 @@ TYPES = (("image", 1, "A"), ("video", 2, "B"), ("document", 3, "C"))
 
 
 def world(n=48, seed=7, s=8, policy=None):
-    owner = Owner(s=s, rng=random.Random(seed))
+    owner = Owner(mk=hashlib.sha256(b"amf-faults-%d" % seed).digest(), s=s, rng=random.Random(seed))
     provs = {k: Provider(k) for k in "ABC"}
     for p in provs.values():
         owner.register_provider(p)
@@ -203,6 +204,7 @@ def soundness(tb, args):
         pa.state.tree, pb.state.tree = MerkleTree(pa.state.leaves), MerkleTree(pb.state.leaves)
         return [pa.state.announce(), pb.state.announce()]
     provs["A"].decompose = swapped
+    owner.hashes = 0
     try:
         owner.split(row.tree_id)
         caught = False
