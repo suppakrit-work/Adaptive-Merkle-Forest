@@ -1,0 +1,26 @@
+step,runs,median_ms,owner_ms,provider_ms,network_ms,wait_ms,calls,sent_bytes,received_bytes
+"Phase 1: register, open 3 tree(s)",1,550.38,7.62,89.05,453.71,542.76,24,10881,718
+"Phase 2: batch write, 50 objects",1,737.11,15.15,176.75,545.21,721.96,24,128964,1807
+"Phase 2: batch write, 50 objects",1,651.55,10.92,179.36,461.26,640.62,24,129096,1807
+"Phase 2: batch write, 50 objects",1,646.97,10.69,174.04,462.24,636.28,24,129255,1806
+"Phase 2: batch write, 50 objects",1,644.21,11.81,174.61,457.78,632.39,24,129243,1807
+"Phase 2: batch write, 50 objects",1,666.69,12.46,194.88,459.34,654.22,24,129255,1807
+"Phase 2: batch write, 50 objects",1,656.86,12.51,176.2,468.15,644.35,24,129264,1810
+Phase 2: upload one object,20,158.86,2.18,5.94,150.73,156.68,8,5550,600
+Phase 3: owner reads one object,20,36.37,0.39,0.18,35.79,35.98,1,108,1916
+"Phase 3: data user reads, with D",20,142.1,2.13,0.43,139.54,139.97,4,432,5092
+"Phase 5: audit of the owner, s = 8",1,638.17,5.21,1.79,631.17,632.96,15,1448,53166
+"Phase 3: 200 reads, Zipf 1",1,7245.88,81.84,35.59,7128.45,7164.04,200,21600,382144
+Phase 4: policy round 1,1,102.54,0.36,0.17,102.02,102.18,3,192,423
+Phase 4: policy round 2,1,106.77,0.38,0.17,106.22,106.39,3,192,63
+Phase 4: policy round 3,1,103.36,0.28,0.14,102.94,103.08,3,192,63
+Phase 4: split at the median,1,81.21,1.64,3.65,75.93,79.57,4,7235,922
+Phase 4: merge the halves back,1,100.05,1.6,3.51,94.94,98.45,4,7076,509
+Phase 4: migrate A -> B (pipe),1,455.8,1.78,310.44,143.57,454.02,5,3252,16198
+Phase 4: release the copy at A,1,40.95,0.28,4.07,36.6,40.67,1,336,24
+Phase 6: localize (rounds),1,328.34,1.74,5.63,320.97,326.59,9,1008,3653
+Phase 6: localize (one exchange),1,149.27,0.58,3.82,144.87,148.69,4,402,2422
+Phase 6: recount of the whole forest,1,44.24,0.45,8.16,35.62,43.79,3,192,538
+Phase 6: fetch all leaf hashes (Wang),1,39.82,0.53,3.28,36.01,39.3,1,98,5800
+"Phase 4: failed check -> repair, migrate",1,665.0,4.49,370.04,290.47,660.51,13,7462,16638
+recovery from the providers,1,1204.85,32.91,1.29,1170.65,1171.94,27,2340,293127
