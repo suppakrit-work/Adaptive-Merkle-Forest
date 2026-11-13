@@ -69,6 +69,11 @@ started providers: AMF as above; the same with `--rounds 0 --upper 1000000`
 objects at A, no policy). On one machine they are written (`--out`) to
 `results/net.csv`, `results/net_static.csv` and `results/net_single.csv`.
 
+The Phase 5 audit challenges `--s` blocks per tree (default 8). For a comparison at equal
+coverage (96 blocks, as AMF's 12 trees at s = 8) the static and single runs are repeated with
+`--s 32` and `--s 96` (`results/net_static_s32.csv`, `results/net_single_s96.csv`). The
+three-cloud runs are in `results/net_cloud*.csv`, described in `results/cloud_setup.md`.
+
 ## Limits of the prototype
 
 - A provider keeps its objects on disk but its trees and DHT node in memory, so

@@ -136,6 +136,7 @@ def main():
                     help="send to the DHT nodes one at a time instead of all at once")
     ap.add_argument("--single", action="store_true",
                     help="the single-tree layout of Wang et al.: one tree over all objects at A, no policy")
+    ap.add_argument("--s", type=int, default=8, help="blocks challenged per tree in the Phase 5 audit")
     ap.add_argument("--out", default="results/net.csv")
     args = ap.parse_args()
     spec = args.provider or [f"{n}=http://127.0.0.1:{8001 + k}" for k, n in enumerate("ABC")]
@@ -198,7 +199,7 @@ def main():
         obj_id, d = owner.reader_view(name, name.split("-")[0])
         return reader.read(obj_id, d, plist)
     m.run("Phase 3: data user reads, with D", user_read, repeat=20)
-    audit = m.run("Phase 5: audit of the owner, s = 8", lambda: Auditor([owner.pk], s=8).audit_owner(owner.digest, plist))
+    audit = m.run(f"Phase 5: audit of the owner, s = {args.s}", lambda: Auditor([owner.pk], s=args.s).audit_owner(owner.digest, plist))
     print(f"    rows recompute to D: {audit.digest_ok}; trees ok: {sum(t.ok for t in audit.trees)}/{len(audit.trees)}")
 
     m.run(f"Phase 3: {args.reads} reads, {workload}", lambda: [owner.read(pick()) for _ in range(args.reads)])
