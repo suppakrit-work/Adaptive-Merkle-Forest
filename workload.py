@@ -197,6 +197,79 @@ def run_hmt(args, seq):
             "HMT, layout rebuilt": dict(base, owner_hashes=rebuilding.hashes - read_hashes, owner_ms=ver_ms + rb_ms)}
 
 
+SENSITIVITY = ([("default", {})]                         # one policy value changed at a time
+               + [(f"N_up={u}", dict(upper=u, lower=u // 4)) for u in (500, 2000)]
+               + [(f"gamma={g}", dict(gamma=g)) for g in (2.0, 8.0)]
+               + [(f"mu={m}", dict(mu=m)) for m in (25, 100)]
+               + [(f"Delta_min={d}", dict(interval=d)) for d in (1, 5)])
+
+
+def run_policy(args, zipf, writes, upper=1000, lower=250, gamma=4.0, mu=50, interval=3):
+    """AMF alone, with the policy values given: owner hashes per access, read path, splits, trees."""
+    w = TraceWorld(args.n, args.object_bytes, upper, args.s, args.seed)
+    o = w.owner
+    pm = PolicyManager(o, upper=upper, lower=lower, gamma=gamma, mu=mu, interval=interval)
+    names = {k: (f"{w.types[k % 3]}-{k}", w.types[k % 3]) for k in range(args.n)}
+    for r in o.live_rows():
+        o._tree_of(r)
+    trees0 = len(o.live_rows())
+    o.hashes = o.digest_hashes = 0
+    reads = path = splits = merges = 0
+    for step, (obj, is_write) in enumerate(accesses(args.n, zipf, writes, args.accesses, args.seed), start=1):
+        name, ftype = names[obj]
+        obj_id = o.catalog.get(name)[0]
+        row = o.row_for(obj_id)
+        if is_write:
+            o.upload(name, w.rnd.randbytes(args.object_bytes), ftype)
+        else:
+            o.read(name)
+            reads += 1
+            path += len(sides_of(row.count, o.catalog.position(obj_id, row.lo)))
+        if step % args.per_round == 0:
+            for d in pm.tick():
+                splits += d.kind == "split"
+                merges += d.kind != "split"
+    return dict(owner_hashes=round((o.hashes + o.digest_hashes) / args.accesses, 2),
+                read_path=round(path / reads, 2), splits=splits, merges=merges,
+                trees_before=trees0, trees_after=len(o.live_rows()))
+
+
+def run_merges(args, share, rounds=6):
+    """Delete a share of the objects, then run policy rounds with no other access: the merge rule at work."""
+    w = TraceWorld(args.n, args.object_bytes, args.upper, args.s, args.seed)
+    o = w.owner
+    pm = PolicyManager(o)
+    names = [f"{w.types[k % 3]}-{k}" for k in range(args.n)]
+    for r in o.live_rows():
+        o._tree_of(r)
+    trees0 = len(o.live_rows())
+    for k in random.Random(7).sample(range(args.n), int(share * args.n)):
+        o.delete(names[k])
+    sizes1 = sorted(r.count for r in o.live_rows())
+    o.hashes = o.digest_hashes = 0
+    merges = splits = 0
+    for _ in range(rounds):
+        for d in pm.tick():
+            merges += d.kind != "split"
+            splits += d.kind == "split"
+    sizes2 = sorted(r.count for r in o.live_rows())
+    return dict(deleted_share=share, trees_before=trees0, trees_after_deletes=len(sizes1),
+                min_tree_after_deletes=sizes1[0], max_tree_after_deletes=sizes1[-1],
+                merges=merges, splits=splits, trees_after_rounds=len(sizes2),
+                min_tree_after=sizes2[0], max_tree_after=sizes2[-1],
+                owner_check_hashes=o.hashes, owner_digest_hashes=o.digest_hashes,
+                check_hashes_per_merge=round(o.hashes / merges, 1) if merges else None,
+                digest_hashes_per_merge=round(o.digest_hashes / merges, 1) if merges else None)
+
+
+def write_rows(path, rows):
+    with open(path, "w", newline="") as f:
+        wr = csv.DictWriter(f, fieldnames=list(rows[0]))
+        wr.writeheader()
+        wr.writerows(rows)
+    print(f"wrote {path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n", type=int, default=10000)
@@ -208,7 +281,27 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--hmt-period", type=int, default=200, help="accesses per HMT period (policy runs at its end)")
     ap.add_argument("--out", default="results/workload.csv")
+    ap.add_argument("--sensitivity", action="store_true",
+                    help="only AMF with one policy value changed at a time (results/sensitivity.csv)")
+    ap.add_argument("--merge", action="store_true",
+                    help="only the delete-heavy run that makes the merge rule act (results/merge.csv)")
     args = ap.parse_args()
+
+    if args.sensitivity or args.merge:
+        if args.sensitivity:
+            rows = []
+            for zipf in (1.2, 1.5):
+                for label, ch in SENSITIVITY:
+                    p = {**dict(upper=1000, lower=250, gamma=4.0, mu=50, interval=3), **ch}
+                    rows.append({"zipf": zipf, "writes": 0.5, "variant": label, **p, **run_policy(args, zipf, 0.5, **p)})
+                    print(rows[-1])
+            write_rows("results/sensitivity.csv", rows)
+        if args.merge:
+            rows = [run_merges(args, share) for share in (0.6, 0.85)]
+            for r in rows:
+                print(r)
+            write_rows("results/merge.csv", rows)
+        return
 
     out, summary = [], []
     for wl, (a, writes) in WORKLOADS.items():

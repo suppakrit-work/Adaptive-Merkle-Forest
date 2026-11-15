@@ -4,8 +4,9 @@ Prototype for the CSS 453 paper *Adaptive Merkle Forest: Dynamic Tree Compositio
 and Decomposition for Scalable Integrity Verification in Multi-Cloud Storage*.
 Python 3.11 or newer (tested on 3.11, 3.12 and 3.13); the only library it needs is
 `cryptography`. `bench.py`, `workload.py`, `faults.py` and `net_demo.py` derive the owner's
-master key from their seed, so a rerun builds the same trees and gives the same counts; only
-the times change.
+master key from their seed, so a rerun builds the same trees and gives the same counts, except
+that owner hashes per access can move by about 0.1 (tree identifiers are random, so a path in D
+can differ by a hash); the times change from machine to machine.
 
 ## Layout
 
@@ -34,8 +35,8 @@ python -m pytest -q
 | Script | What it does | Output |
 |---|---|---|
 | `demo.py` | the six phases on one machine, step by step | screen |
-| `bench.py` | cost of each operation for 10^3 to 10^5 objects, beside the baselines of `baselines/` | `results/bench.csv` |
-| `workload.py` | AMF against the forest that never restructures, one tree, and HMT (with a verifier that trusts its layout changes and one that recomputes them), under uniform and Zipf access | `results/workload.csv` |
+| `bench.py` | cost of each operation for 10^3 to 10^5 objects, beside the baselines of `baselines/`; with `--state`, only what the owner keeps (catalog, node arrays, rows) | `results/bench.csv`, `results/state.csv` |
+| `workload.py` | AMF against the forest that never restructures, one tree, and HMT (with a verifier that trusts its layout changes and one that recomputes them), under uniform and Zipf access; with `--sensitivity`, AMF alone with one policy value changed at a time; with `--merge`, 60% or 85% of the objects deleted and then policy rounds | `results/workload.csv`, `results/sensitivity.csv`, `results/merge.csv` |
 | `owners.py` | 1 to 10,000 owners sharing three providers: one owner's upload, read and audit, and a DHT lookup, as the number of owners grows | `results/owners.csv` |
 | `net_demo.py` | the owner, a data user and an auditor against three provider services over HTTP: batch loading, skewed reads, policy rounds, a fault and its localization (`--single`: the same run on one tree over all objects, the layout of Wang et al.) | `results/net.csv` |
 | `faults.py` | one injected fault per guarantee of Section IV, and the check that catches it | `results/faults.csv` |

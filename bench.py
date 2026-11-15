@@ -35,7 +35,9 @@ sum to under N_low.
 The forest is built in bulk (the owner computes every root from its catalog,
 signs the rows, the providers promote the trees); the encrypted catalog copy
 at the providers is skipped, since recovery is not measured here.  Medians
-over --reps runs.  Results go to results/bench.csv, one row per N.
+over --reps runs.  Results go to results/bench.csv, one row per N. 
+With --state it measures only what the owner keeps (catalog, node arrays, rows) and writes
+results/state.csv instead.
 """
 import argparse
 import csv
@@ -347,6 +349,23 @@ def bench_single(w, reps):
     return out
 
 
+def owner_state(n, obj_bytes, upper, s, seed):
+    """What the owner keeps for n objects: the catalog (identifier, leaf hash and file name per object),
+    the node arrays of its trees (all of them built, so an upper bound) and its copy of the rows."""
+    w = World(n, obj_bytes, upper, s, seed)
+    o = w.owner
+    live = o.live_rows()
+    for r in live:
+        o._tree_of(r)
+    cat = len(o.catalog) * (crypto.ID_LEN + 32)
+    names = sum(len(name.encode()) for name, _, _ in o.catalog.entries())
+    nodes = sum(len(t._nodes) for t in o._trees.values())
+    rows = sum(len(r.payload()) + len(r.signature) for r in live)
+    total = cat + names + nodes + rows
+    return {"n": n, "trees": len(live), "catalog_bytes": cat, "name_bytes": names, "node_bytes": nodes,
+            "row_bytes": rows, "total_bytes": total, "bytes_per_object": round(total / n, 1)}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sizes", type=int, nargs="+", default=[1000, 10000, 100000])
@@ -356,7 +375,19 @@ def main():
     ap.add_argument("--upper", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", default="results/bench.csv")
+    ap.add_argument("--state", action="store_true", help="only measure the owner's state, into results/state.csv")
     args = ap.parse_args()
+
+    if args.state:
+        rows = [owner_state(n, args.object_bytes, args.upper, args.s, args.seed) for n in args.sizes]
+        for r in rows:
+            print(r)
+        with open("results/state.csv", "w", newline="") as f:
+            wr = csv.DictWriter(f, fieldnames=list(rows[0]))
+            wr.writeheader()
+            wr.writerows(rows)
+        print("\nwrote results/state.csv")
+        return
 
     results = []
     for n in args.sizes:
