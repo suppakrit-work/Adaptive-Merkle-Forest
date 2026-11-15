@@ -7,6 +7,9 @@ Python 3.11 or newer (tested on 3.11, 3.12 and 3.13); the only library it needs 
 master key from their seed, so a rerun creates the same objects and accesses. Tree identifiers are
 random, so owner hashes per access can move by up to about 0.2 between runs (a path in D can
 differ by a hash), while read paths and splits stay the same; the times change from machine to machine.
+This repository holds the prototype, the scripts that produce every number
+in the paper, and their output files in `results/`. The sections below say
+how to install the prototype and which script writes which file.
 
 ## Layout
 
