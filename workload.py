@@ -5,7 +5,7 @@ driven by the same sequence of accesses under two configurations:
 
   static   a forest with the same size bounds that never restructures
            (baselines/amf_static.py)
-  AMF      the Policy Manager of Phase 4 with the values of Table II, one
+  AMF      the Policy Manager of Phase 4 with the values of Table III, one
            policy round after every --per-round accesses
 
 and, for reference, one tree over all N objects, computed rather than run
@@ -97,7 +97,7 @@ def accesses(n, a, writes, total, seed):
 def run(config, args, seq):
     w = TraceWorld(args.n, args.object_bytes, args.upper, args.s, args.seed)
     o = w.owner
-    pm = PolicyManager(o) if config == "AMF" else amf_static.no_policy(o)    # Table II: 1000, 250, 4, 50, 3
+    pm = PolicyManager(o) if config == "AMF" else amf_static.no_policy(o)    # Table III: 1000, 250, 4, 50, 3
     names = {k: (f"{w.types[k % 3]}-{k}", w.types[k % 3]) for k in range(args.n)}
     tot = dict(owner_hashes=0, provider_leaves=0, read_path=0, reads=0, writes=0,
                owner_ms=0.0, provider_ms=0.0, splits=0, merges=0)

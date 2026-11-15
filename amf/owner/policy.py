@@ -1,4 +1,4 @@
-"""The Policy Manager -- Phase 4 and Algorithm 2: the rules of split and merge, a policy round,
+"""The Policy Manager -- Phase 4 and Algorithm 3: the rules of split and merge, a policy round,
 and the response to a failed check.
 
 Let R_L and R_R be the accesses, reads and writes, a tree has seen on its first
@@ -15,9 +15,9 @@ A split is made at the median, where the check is one hash.  The size test is
 also made on the count a write would produce, before the write, so no tree is
 ever taken past N_up.  A migration is not driven by the counts (owner.evacuate).
 A hysteresis rule keeps N_low well under half of N_up (here: at most a quarter,
-which Table II's 250 and 1000 meet exactly) and forbids touching the same tree
+which Table III's 250 and 1000 meet exactly) and forbids touching the same tree
 twice within Delta_min policy rounds.  A migration is ordered here too, but
-only after a failed check of Phase 3, 5 or 6 (failed_check, the FailedCheck of Algorithm 2)
+only after a failed check of Phase 3, 5 or 6 (failed_check, the FailedCheck of Algorithm 3)
 and tick is its Round.
 
 Reads come from the providers' reports, per half of each tree, the owner's
@@ -25,7 +25,7 @@ included; a provider is believed only about trees it holds, and only for
 counts that can be counts.  Writes are the ones the owner made
 (owner.write_counts).  When the owner runs in parallel, the orders of one
 round go out together and each announced root is checked as it arrives.
-Parameters (Table II): N_up 1000, N_low 250, gamma 4, mu 50, Delta_min 3.
+Parameters (Table III): N_up 1000, N_low 250, gamma 4, mu 50, Delta_min 3.
 """
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -151,7 +151,7 @@ class PolicyManager:
         """The size test for a batch that would take the tree past N_up: split it at the median of
         the identifiers it holds and the ones arriving, so both halves come out near equal rather
         than one half taking the whole batch.  That boundary is not the tree's own median, so the
-        owner recomputes the two roots (Algorithm 3, line 12) instead of the one-hash check."""
+        owner recomputes the two roots (Algorithm 2, line 13) instead of the one-hash check."""
         if row.count + len(new_ids) <= self.upper or row.count < 2:
             return
         union = sorted(set(self.owner.catalog.ids_in(row.lo, row.hi)) | set(new_ids))

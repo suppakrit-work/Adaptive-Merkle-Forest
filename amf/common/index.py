@@ -1,4 +1,4 @@
-"""Distributed Index -- Section III-A 4), III-B 2) and 3), Table I, Definition 2.
+"""Distributed Index -- Section III-A 4), III-B 2) and 3), Table II, Definition 2.
 
 One table with one row per tree, live or retired:
 

@@ -175,7 +175,7 @@ def detection(tb, args):
 
 
 def soundness(tb, args):
-    """IV-C: Algorithm 3 is the only way a root enters the index."""
+    """IV-C: Algorithm 2 is the only way a root enters the index."""
     owner, provs, names = world()
     real = provs["A"].write
 
@@ -189,7 +189,7 @@ def soundness(tb, args):
         caught = False
     except VerificationError:
         caught = True
-    tb.add("IV-C", "wrong root announced on a write", "Alg 3 line 12", caught and (dict(owner.index), owner.digest) == before,
+    tb.add("IV-C", "wrong root announced on a write", "Alg 2 line 13", caught and (dict(owner.index), owner.digest) == before,
            "refused; index and D unchanged; Shadow Area empty" if provs["A"].shadow == {} else "shadow not empty")
     provs["A"].write = real
 
@@ -210,7 +210,7 @@ def soundness(tb, args):
         caught = False
     except VerificationError:
         caught = True
-    tb.add("IV-C", "median split with a leaf swapped across halves", "Alg 3 line 6 (one hash)", caught,
+    tb.add("IV-C", "median split with a leaf swapped across halves", "Alg 2 line 6 (one hash)", caught,
            "H(r_a || r_b) != r; refused", f"{owner.hashes} hash")
     provs["A"].decompose = real
     owner.hashes = 0
@@ -221,7 +221,7 @@ def soundness(tb, args):
         caught = False
     except VerificationError:
         caught = True
-    tb.add("IV-C", "split elsewhere with a leaf swapped", "Alg 3 line 12 (recompute)", caught,
+    tb.add("IV-C", "split elsewhere with a leaf swapped", "Alg 2 line 13 (recompute)", caught,
            "root over the catalog differs; refused", f"{owner.hashes} hashes")
     provs["A"].decompose = real
 
@@ -242,7 +242,7 @@ def soundness(tb, args):
         caught = False
     except VerificationError:
         caught = True
-    tb.add("IV-C", "merge with one leaf dropped", "Alg 3 line 3 (count)", caught, "count differs; refused")
+    tb.add("IV-C", "merge with one leaf dropped", "Alg 2 line 3 (count)", caught, "count differs; refused")
     provs["B"].compose = real
 
     # possession: the migration challenge at s positions against a destination missing a fraction delta
@@ -306,7 +306,7 @@ def attribution(tb, args):
     moved = owner.policy.failed_check("A", [row.tree_id])
     tb.add("IV-D", "destination B announces the right root but holds nothing", "challenge fails, next provider tried",
            moved and moved[0].provider == "C", f"tree now at {moved[0].provider}; A still recomputes r",
-           note="FailedCheck of Alg 2")
+           note="FailedCheck of Alg 3")
 
 
 def localization(tb, args):
@@ -361,7 +361,7 @@ def reports(tb, args):
     decisions = [owner.policy.tick() for _ in range(9)]
     n_split = sum(d.kind == "split" for ds in decisions for d in ds)
     intact = all(r.root == root_of(owner.catalog.leaves_in(r.lo, r.hi)) for r in owner.live_rows())
-    tb.add("IV-F", "every provider reports 10^6 reads on one half (trees < 2 N_low)", "policy (Alg 2), floor 2 N_low",
+    tb.add("IV-F", "every provider reports 10^6 reads on one half (trees < 2 N_low)", "policy (Alg 3), floor 2 N_low",
            n_split == 0 and intact, f"{n_split} splits in 9 rounds; forest intact: {intact}")
 
     owner, provs, names = world(n=0, policy=dict(upper=4000, lower=250, interval=3))
@@ -370,9 +370,9 @@ def reports(tb, args):
         p.report_reads = (lambda own, p=p: {k: (10 ** 6, 0) for k in p.live if k[0] == own})
     rounds = [k + 1 for k in range(9) if any(d.kind == "split" for d in owner.policy.tick())]
     intact = all(r.root == root_of(owner.catalog.leaves_in(r.lo, r.hi)) for r in owner.live_rows())
-    tb.add("IV-F", "the same lie on a 2400-leaf tree (halves stay above 2 N_low)", "policy (Alg 2), hysteresis Delta_min = 3",
+    tb.add("IV-F", "the same lie on a 2400-leaf tree (halves stay above 2 N_low)", "policy (Alg 3), hysteresis Delta_min = 3",
            rounds == [1, 4, 7] and intact, f"splits only in rounds {rounds}: a tree waits Delta_min rounds; forest intact: {intact}",
-           note="each split still checked by Alg 3")
+           note="each split still checked by Alg 2")
 
     owner, provs, names = world(policy=dict(upper=1000, lower=250))
     row = tree_at(owner, "B")

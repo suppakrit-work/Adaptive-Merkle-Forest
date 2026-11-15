@@ -1,4 +1,4 @@
-"""Tests for amf/index.py -- the Distributed Index (III-A 4), III-B 2) and 3), Table I, Definition 2) and D."""
+"""Tests for amf/index.py -- the Distributed Index (III-A 4), III-B 2) and 3), Table II, Definition 2) and D."""
 import hashlib
 from dataclasses import replace
 

@@ -4,9 +4,9 @@ Prototype for the CSS 453 paper *Adaptive Merkle Forest: Dynamic Tree Compositio
 and Decomposition for Scalable Integrity Verification in Multi-Cloud Storage*.
 Python 3.11 or newer (tested on 3.11, 3.12 and 3.13); the only library it needs is
 `cryptography`. `bench.py`, `workload.py`, `faults.py` and `net_demo.py` derive the owner's
-master key from their seed, so a rerun builds the same trees and gives the same counts, except
-that owner hashes per access can move by about 0.1 (tree identifiers are random, so a path in D
-can differ by a hash); the times change from machine to machine.
+master key from their seed, so a rerun creates the same objects and accesses. Tree identifiers are
+random, so owner hashes per access can move by up to about 0.2 between runs (a path in D can
+differ by a hash), while read paths and splits stay the same; the times change from machine to machine.
 
 ## Layout
 
@@ -14,8 +14,8 @@ The code under `amf/` has one folder per party of the system model (Fig. 1).
 
 | Folder | Files | In the paper |
 |---|---|---|
-| `amf/common/` | `crypto` identifiers, encryption, leaf hash; `merkle` canonical-shape tree; `bptree` the B+ tree with counts; `index` index rows, DHT node (B+ tree on lo), forest digest D; `orders` signed orders; `wire` the JSON format used on the network | Phase 2, III-B, Definitions 1–2, Lemma 1, Table I |
-| `amf/owner/` | `owner` Key/Signing and Verification Manager (Algorithm 3); `catalog` the owner's books (B+ tree on id); `policy` Policy Manager (Algorithm 2); `localize` fault localization (Algorithm 5) | III-A 1, Phases 2–4 and 6 |
+| `amf/common/` | `crypto` identifiers, encryption, leaf hash; `merkle` canonical-shape tree; `bptree` the B+ tree with counts; `index` index rows, DHT node (B+ tree on lo), forest digest D; `orders` signed orders; `wire` the JSON format used on the network | Phase 2, III-B, Definitions 1–2, Lemma 1, Table II |
+| `amf/owner/` | `owner` Key/Signing and Verification Manager (Algorithm 2); `catalog` the owner's books (B+ tree on id); `policy` Policy Manager (Algorithm 3); `localize` fault localization (Algorithm 5) | III-A 1, Phases 2–4 and 6 |
 | `amf/provider/` | `service` Storage Service (Proof Engine, Shadow Area, Migrate Pipe, DHT node); `store` objects on disk; `server` the service over HTTP; `client` a provider seen over HTTP | III-A 3 |
 | `amf/auditor/` | `auditor` the auditor and the data user (Algorithms 1 and 4) | III-A 2, Phases 3 and 5 |
 | `baselines/` | the baselines of Section V, one module per paper, built from the same primitives: `wang2011` one Merkle tree per owner (path proofs, the path-update check, fetch-all); `zhu2012` localization by re-challenging halves (CPDP); `mizrahi2024` a reshaping without a check, rebuilt at the verifier (traffic-aware trees, HMT); `shangguan2026` HMT itself, the Huffman-Merkle tree with its cold and hot tiers, Count-Min Sketch, promotion cache and Ratio-Based policy, run on the same access streams; `amf_static` AMF with the policy off | Section V |

@@ -12,12 +12,12 @@ wall time is split three ways: what is left to the owner (checks, signatures,
 the wire format), the time the providers report for their own work (each
 reply carries it), and the rest of the wait, which is the network, so the same
 script measures a run on localhost or across three clouds.  Objects go up as batch
-writes of --batch objects per tree (one announcement, one check, Algorithm 3
+writes of --batch objects per tree (one announcement, one check, Algorithm 2
 line 12), then single writes and reads are timed on their own.  Reads follow
 a Zipf law over the objects (--zipf 0 for uniform); --locality F sends nine
 reads in ten into the lowest fraction F of each type's identifier range, a
 hot range the policy can see.  The Policy Manager runs --rounds policy rounds
-with the values of Table II, and each round is timed with its orders out
+with the values of Table III, and each round is timed with its orders out
 together.  With
 providers started in --debug mode it also damages one object, names it,
 localizes it by Phase 6 and by fetching every leaf hash (the Wang baseline),
@@ -25,7 +25,7 @@ and moves the damaged provider's trees away.  The owner sends each new row to
 all DHT nodes at once (--sequential: one after another).  --single runs the
 single-tree layout of Wang et al. end to end instead: one tree over all
 objects at provider A and no policy, through the same loading, read, audit
-and fault steps (the owner still checks writes with Algorithm 3; the cost of
+and fault steps (the owner still checks writes with Algorithm 2; the cost of
 Wang's own path-update check is in bench.py).
 Results go to results/net.csv (--out).
 """
@@ -217,7 +217,7 @@ def main():
         a, b, _ = m.run("Phase 4: split at the median", lambda: owner.split(image.tree_id))
         h1 = owner.hashes
         ab = m.run("Phase 4: merge the halves back", lambda: owner.merge(a.tree_id, b.tree_id))
-        print(f"    owner hashes for the checks: split {h1 - h0}, merge {owner.hashes - h1} (Algorithm 3, lines 5-6); "
+        print(f"    owner hashes for the checks: split {h1 - h0}, merge {owner.hashes - h1} (Algorithm 2, lines 6-7); "
               f"for D: {owner.digest_hashes - d0}; root unchanged: {ab.root == image.root}")
         moved = m.run("Phase 4: migrate A -> B (pipe)", lambda: owner.migrate(ab.tree_id, "B"))
         later = Auditor([owner.pk], s=8).audit_tree(moved, plist)

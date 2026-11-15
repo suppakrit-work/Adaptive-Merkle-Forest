@@ -29,7 +29,7 @@ Timed here: every AMF operation (owner and provider sides), the rebuild
 baseline, the Wang check and fetch-all.  Counted, not timed: the single-tree
 read path and localization depth, and the re-challenge rounds and blocks
 (CPDP's tags are not implemented).  The merge timed here joins two neighbors
-as they are, whatever their sizes; Table II's rule would only merge two that
+as they are, whatever their sizes; Table III's rule would only merge two that
 sum to under N_low.
 
 The forest is built in bulk (the owner computes every root from its catalog,

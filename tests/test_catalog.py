@@ -1,4 +1,4 @@
-"""Tests for amf/catalog.py -- the owner's catalog (III-A 1 b), Table I, Phases 2, 4, 5)."""
+"""Tests for amf/catalog.py -- the owner's catalog (III-A 1 b), Table II, Phases 2, 4, 5)."""
 import hashlib
 import random
 

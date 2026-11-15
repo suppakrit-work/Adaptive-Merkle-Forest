@@ -22,7 +22,7 @@ the challenge of c random blocks the paper's client runs after every update
 of which make the paper's client dearer than counted here.  The tree is AMF's Merkle tree
 (amf.common.merkle), so both schemes hash the same bytes with the same
 function; they differ in the number of trees and in how a change is checked
-(AMF: Algorithm 3 against the owner's catalog; here: along the path).
+(AMF: Algorithm 2 against the owner's catalog; here: along the path).
 """
 from amf.common.merkle import depth_of, node_hash, sides_of
 

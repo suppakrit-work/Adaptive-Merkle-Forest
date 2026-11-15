@@ -204,8 +204,8 @@ def main():
     assert all(owner.read(n) == data for n, data in files.items())
     show_index(owner, "Distributed Index after the migration")
 
-    # ---- Algorithm 3 refusing a lie ---------------------------------------------------------
-    say("\n[7] Algorithm 3: a provider that announces a wrong root at upload is refused, nothing changes.")
+    # ---- Algorithm 2 refusing a lie ---------------------------------------------------------
+    say("\n[7] Algorithm 2: a provider that announces a wrong root at upload is refused, nothing changes.")
     target = trees_of(owner, 1)[0].provider
     real_write = provs[target].write
     provs[target].write = lambda i, c: (lambda t: t[:3] + (bytes(32),) + t[4:])(real_write(i, c))

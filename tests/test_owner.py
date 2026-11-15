@@ -1,4 +1,4 @@
-"""End-to-end tests for amf/owner.py -- Phases 1-3 and Algorithm 3 for writes."""
+"""End-to-end tests for amf/owner.py -- Phases 1-3 and Algorithm 2 for writes."""
 import random
 from dataclasses import replace
 
@@ -105,7 +105,7 @@ def test_every_signed_root_is_one_the_owner_computed_itself():
         assert row.root == root_of(owner.catalog.leaves_in(row.lo, row.hi))
 
 
-# ---- Algorithm 3 on writes: what a provider announces is checked before it is signed ----
+# ---- Algorithm 2 on writes: what a provider announces is checked before it is signed ----
 
 def _lying_write(prov, field):
     real = prov.write

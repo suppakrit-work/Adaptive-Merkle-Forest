@@ -1,4 +1,4 @@
-"""The owner's catalog -- the state of the Verification Manager (III-A 1 b, Table I).
+"""The owner's catalog -- the state of the Verification Manager (III-A 1 b, Table II).
 
 The catalog maps file names to identifiers and leaf hashes and keeps the
 identifiers in identifier order, so the owner can, for any range [lo, hi):

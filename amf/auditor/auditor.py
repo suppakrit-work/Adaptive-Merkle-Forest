@@ -137,7 +137,7 @@ class Auditor:
             a = _fields(a, 5)
             if a is not None and type(a[0]) is int:
                 answers.setdefault(a[0], a)
-        for i in positions:                               # Algorithm 4, lines 13-16
+        for i in positions:                               # Algorithm 4, lines 11-14
             if i not in answers or answers[i][2] is None:  # no answer, or no ciphertext: missing
                 rep.missing.append(i)
                 continue
